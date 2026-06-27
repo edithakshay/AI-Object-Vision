@@ -30,7 +30,7 @@ A professional, production-ready Windows desktop application for real-time AI ob
 | Camera | RTSP URL |
 |--------|----------|
 | RGB | `rtsp://192.168.144.108:554/stream=1` |
-| Thermal | `rtsp://192.168.144.108:554/stream=2` |
+| Thermal | `rtsp://192.168.144.108:555/stream=2` |
 
 Edit these in **Settings** or directly in `config/app_config.json`.
 
@@ -39,7 +39,9 @@ Edit these in **Settings** or directly in `config/app_config.json`.
 ## Quick Start
 
 ```bash
-# 1. Clone / unzip the project folder
+# 1. Extract and enter the project folder
+cd DualVisionAI
+
 # 2. Create virtual environment
 python -m venv venv
 venv\Scripts\activate
@@ -47,14 +49,17 @@ venv\Scripts\activate
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Generate icons (first time only)
+# 4. Download AI model into models/ folder (internet required once)
+python setup.py
+
+# 5. Generate icons (first time only)
 python generate_icons.py
 
-# 5. Run the application
+# 6. Run the application
 python main.py
 ```
 
-The first run will automatically download the YOLO model (~6 MB for yolov8n). After that, the app works completely offline.
+After `setup.py` runs, the model is stored in `models/yolov8n.pt`. The app works **completely offline** from that point forward.
 
 ---
 

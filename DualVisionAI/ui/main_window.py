@@ -300,14 +300,15 @@ class MainWindow(ctk.CTk):
         def _load_and_start():
             model_path = self._model_manager.get_model_path(model_name)
 
-            # If model isn't cached locally, let the user know a download will happen
+            # If model isn't cached locally, suggest running setup.py
             if not self._model_manager.is_downloaded(model_name):
                 self.after(0, messagebox.showinfo,
-                           "First Run — Downloading Model",
-                           f"Model '{model_name}' not found locally.\n\n"
-                           "Ultralytics will now auto-download it (~5-20 MB).\n"
-                           "Internet is required only this once.\n\n"
-                           "Click OK and wait for the app to start detecting.")
+                           "Model Not Found — Auto-Download",
+                           f"Model '{model_name}' is not in the models/ folder.\n\n"
+                           "Tip: Run setup.py once to pre-download the model:\n"
+                           "     python setup.py\n\n"
+                           "For now, Ultralytics will download it automatically.\n"
+                           "Click OK and wait a moment for it to complete.")
 
             # Detector handles both local-load and auto-download transparently
             detector = Detector(

@@ -5,7 +5,7 @@ from pathlib import Path
 DEFAULT_SETTINGS = {
     "rtsp": {
         "rgb_url": "rtsp://192.168.144.108:554/stream=1",
-        "thermal_url": "rtsp://192.168.144.108:554/stream=2",
+        "thermal_url": "rtsp://192.168.144.108:555/stream=2",
         "reconnect_delay": 3,
         "buffer_size": 2,
         "timeout": 10
