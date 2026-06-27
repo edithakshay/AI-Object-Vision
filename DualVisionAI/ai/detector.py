@@ -1,6 +1,6 @@
 """
-AI Detector — wraps Ultralytics YOLO with automatic fallback download.
-Runs inference in a dedicated thread; callers push frames and pull results.
+AI Detector — threaded YOLO inference with GPU auto-selection.
+Results carry a timestamp so callers can discard stale ones.
 """
 import cv2
 import numpy as np
@@ -25,9 +25,28 @@ def class_color(class_id: int) -> tuple:
     return COCO_PALETTE[class_id % len(COCO_PALETTE)]
 
 
+def _detect_best_device(prefer_gpu: bool) -> str:
+    """Return 'cuda:0', 'mps', or 'cpu' based on what's available."""
+    if not prefer_gpu:
+        return "cpu"
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            logger.info(f"GPU detected: {name}")
+            return "cuda:0"
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logger.info("Apple MPS detected.")
+            return "mps"
+    except ImportError:
+        pass
+    logger.info("No GPU found — using CPU.")
+    return "cpu"
+
+
 class DetectionResult:
     __slots__ = ("boxes", "class_ids", "confidences", "class_names",
-                 "track_ids", "inference_ms")
+                 "track_ids", "inference_ms", "timestamp")
 
     def __init__(self):
         self.boxes: list = []
@@ -36,6 +55,13 @@ class DetectionResult:
         self.class_names: list = []
         self.track_ids: list = []
         self.inference_ms: float = 0.0
+        self.timestamp: float = time.time()
+
+    def is_fresh(self, max_age_sec: float = 1.5) -> bool:
+        return (time.time() - self.timestamp) < max_age_sec
+
+    def is_empty(self) -> bool:
+        return len(self.boxes) == 0
 
 
 class Detector:
@@ -43,20 +69,21 @@ class Detector:
                  iou: float = 0.45, use_gpu: bool = True,
                  input_size: int = 640, frame_skip: int = 1):
         self.model_path = Path(model_path)
-        self.model_name = self.model_path.name  # e.g. "yolov8n.pt"
+        self.model_name = self.model_path.name
         self.conf = conf
         self.iou = iou
         self.use_gpu = use_gpu
         self.input_size = input_size
         self.frame_skip = max(1, frame_skip)
+        self.device = "cpu"
 
         self._model = None
         self._class_names: list[str] = []
         self._loaded = False
-        self._lock = threading.Lock()
 
-        self._rgb_queue: queue.Queue = queue.Queue(maxsize=2)
-        self._thermal_queue: queue.Queue = queue.Queue(maxsize=2)
+        # Separate queues per stream; maxsize=1 so inference always gets the latest frame
+        self._rgb_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._thermal_queue: queue.Queue = queue.Queue(maxsize=1)
         self._rgb_result: DetectionResult | None = None
         self._thermal_result: DetectionResult | None = None
         self._result_lock = threading.Lock()
@@ -70,42 +97,39 @@ class Detector:
         self._inf_count = 0
         self._inf_timer = time.time()
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def load(self) -> bool:
         try:
             from ultralytics import YOLO
-            logger.info(f"Loading model: {self.model_name}")
+            self.device = _detect_best_device(self.use_gpu)
+            logger.info(f"Loading model: {self.model_name}  device={self.device}")
 
-            # Determine device
-            device = "cpu"
-            if self.use_gpu:
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        device = "0"
-                except ImportError:
-                    pass
-
-            # Try loading from local path first; fall back to letting
-            # Ultralytics auto-download by model name
-            loaded_from_path = False
+            # Try local path first, fall back to auto-download by name
             if self.model_path.exists() and self.model_path.stat().st_size > 100_000:
-                try:
-                    self._model = YOLO(str(self.model_path))
-                    loaded_from_path = True
-                    logger.info(f"Loaded from local path: {self.model_path}")
-                except Exception as e:
-                    logger.warning(f"Local load failed ({e}), trying auto-download ...")
-
-            if not loaded_from_path:
-                # Let Ultralytics handle download + caching automatically
-                logger.info(f"Auto-downloading model: {self.model_name}")
+                self._model = YOLO(str(self.model_path))
+                logger.info(f"Loaded from disk: {self.model_path}")
+            else:
+                logger.info(f"Auto-downloading: {self.model_name}")
                 self._model = YOLO(self.model_name)
-                logger.info(f"Model auto-downloaded: {self.model_name}")
 
-            self._model.to(device if device != "cpu" else "cpu")
+            # Move to selected device
+            if self.device != "cpu":
+                try:
+                    self._model.to(self.device)
+                    logger.info(f"Model moved to {self.device}")
+                except Exception as e:
+                    logger.warning(f"GPU move failed ({e}), falling back to CPU.")
+                    self.device = "cpu"
+
+            # Warm-up pass (reduces first-inference lag)
+            dummy = np.zeros((self.input_size, self.input_size, 3), dtype=np.uint8)
+            self._model.predict(dummy, verbose=False, conf=self.conf, iou=self.iou)
+
             self._class_names = list(self._model.names.values())
             self._loaded = True
-            logger.info(f"Model ready — {len(self._class_names)} classes, device={device}")
+            logger.info(f"Model ready — {len(self._class_names)} classes, device={self.device}")
             return True
 
         except Exception as e:
@@ -115,7 +139,7 @@ class Detector:
 
     def start(self):
         if not self._loaded:
-            raise RuntimeError("Model not loaded. Call load() first.")
+            raise RuntimeError("Model not loaded.")
         if self._running:
             return
         self._running = True
@@ -133,7 +157,7 @@ class Detector:
             except queue.Full:
                 pass
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3)
+            self._thread.join(timeout=4)
 
     def pause(self):
         self._paused = True
@@ -150,11 +174,11 @@ class Detector:
     def _push(self, q: queue.Queue, frame):
         if frame is None:
             return
-        if q.full():
-            try:
-                q.get_nowait()
-            except queue.Empty:
-                pass
+        # Drop old frame to always keep the freshest one
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
         try:
             q.put_nowait(frame)
         except queue.Full:
@@ -167,6 +191,12 @@ class Detector:
     def get_thermal_result(self) -> DetectionResult | None:
         with self._result_lock:
             return self._thermal_result
+
+    def clear_results(self):
+        """Clear cached results (call when stopping or pausing)."""
+        with self._result_lock:
+            self._rgb_result = None
+            self._thermal_result = None
 
     def update_params(self, conf: float = None, iou: float = None,
                       frame_skip: int = None, input_size: int = None):
@@ -187,20 +217,22 @@ class Detector:
     def is_loaded(self) -> bool:
         return self._loaded
 
+    # ------------------------------------------------------------------
+    # Inference thread
+    # ------------------------------------------------------------------
     def _inference_loop(self):
         while self._running:
             if self._paused:
                 time.sleep(0.05)
                 continue
 
+            # Block briefly waiting for a frame on either stream
             rgb_frame = None
             thermal_frame = None
-
             try:
-                rgb_frame = self._rgb_queue.get(timeout=0.1)
+                rgb_frame = self._rgb_queue.get(timeout=0.05)
             except queue.Empty:
                 pass
-
             try:
                 thermal_frame = self._thermal_queue.get_nowait()
             except queue.Empty:
@@ -215,45 +247,40 @@ class Detector:
             self._skip_counter = 0
 
             t0 = time.time()
-            results = {}
-
-            if rgb_frame is not None:
-                results["rgb"] = self._run_inference(rgb_frame)
-            if thermal_frame is not None:
-                results["thermal"] = self._run_inference(thermal_frame)
-
+            rgb_res = self._run_inference(rgb_frame) if rgb_frame is not None else None
+            thermal_res = self._run_inference(thermal_frame) if thermal_frame is not None else None
             inf_ms = (time.time() - t0) * 1000
-            self._update_fps()
 
             with self._result_lock:
-                if "rgb" in results:
-                    results["rgb"].inference_ms = inf_ms
-                    self._rgb_result = results["rgb"]
-                if "thermal" in results:
-                    results["thermal"].inference_ms = inf_ms
-                    self._thermal_result = results["thermal"]
+                if rgb_res is not None:
+                    rgb_res.inference_ms = inf_ms
+                    self._rgb_result = rgb_res
+                if thermal_res is not None:
+                    thermal_res.inference_ms = inf_ms
+                    self._thermal_result = thermal_res
+
+            self._update_fps()
 
     def _run_inference(self, frame) -> DetectionResult:
         result = DetectionResult()
         if frame is None or self._model is None:
             return result
         try:
+            h_orig, w_orig = frame.shape[:2]
             resized = cv2.resize(frame, (self.input_size, self.input_size))
             preds = self._model.predict(
                 resized,
                 conf=self.conf,
                 iou=self.iou,
                 verbose=False,
-                stream=False
+                device=self.device
             )
-            if not preds:
-                return result
+            result.timestamp = time.time()
+
+            if not preds or preds[0].boxes is None or len(preds[0].boxes) == 0:
+                return result  # empty result with fresh timestamp
 
             pred = preds[0]
-            if pred.boxes is None or len(pred.boxes) == 0:
-                return result
-
-            h_orig, w_orig = frame.shape[:2]
             sx = w_orig / self.input_size
             sy = h_orig / self.input_size
 
@@ -262,17 +289,17 @@ class Detector:
                 x1, y1, x2, y2 = (float(xyxy[0] * sx), float(xyxy[1] * sy),
                                    float(xyxy[2] * sx), float(xyxy[3] * sy))
                 cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
+                conf_val = float(box.conf[0])
                 name = (self._class_names[cls_id]
                         if cls_id < len(self._class_names) else str(cls_id))
-
                 result.boxes.append([x1, y1, x2, y2])
                 result.class_ids.append(cls_id)
-                result.confidences.append(conf)
+                result.confidences.append(conf_val)
                 result.class_names.append(name)
                 result.track_ids.append(0)
         except Exception as e:
             logger.error(f"Inference error: {e}")
+            result.timestamp = time.time()  # mark as fresh even on error
 
         return result
 
@@ -286,10 +313,14 @@ class Detector:
             self._inf_timer = now
 
 
-def draw_detections(frame, result: DetectionResult,
-                    draw_tracking: bool = True) -> np.ndarray:
-    if frame is None or result is None:
+# ------------------------------------------------------------------
+# Drawing helper
+# ------------------------------------------------------------------
+def draw_detections(frame, result: DetectionResult) -> np.ndarray:
+    if frame is None:
         return frame
+    if result is None or not result.is_fresh() or result.is_empty():
+        return frame  # return clean frame — no stale boxes
     out = frame.copy()
     for i, box in enumerate(result.boxes):
         x1, y1, x2, y2 = [int(v) for v in box]
@@ -299,16 +330,18 @@ def draw_detections(frame, result: DetectionResult,
         tid = result.track_ids[i] if i < len(result.track_ids) else 0
 
         color = class_color(cls_id)
+        # Bounding box
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
 
+        # Label
         label_parts = [f"{name} {conf:.2f}"]
-        if draw_tracking and tid > 0:
+        if tid > 0:
             label_parts.append(f"ID:{tid}")
         label = " | ".join(label_parts)
 
-        (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
-        by1 = max(y1 - th - baseline - 4, 0)
+        (tw, th), bl = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
+        by1 = max(y1 - th - bl - 4, 0)
         cv2.rectangle(out, (x1, by1), (x1 + tw + 4, y1), color, -1)
-        cv2.putText(out, label, (x1 + 2, y1 - baseline - 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(out, label, (x1 + 2, y1 - bl - 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1, cv2.LINE_AA)
     return out
