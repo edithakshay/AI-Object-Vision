@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+build/
+dist/
+*.spec.bak
+models/*.pt
+models/*.onnx
+logs/
+recordings/
+screenshots/
+config/app_config.json
+.DS_Store
+Thumbs.db

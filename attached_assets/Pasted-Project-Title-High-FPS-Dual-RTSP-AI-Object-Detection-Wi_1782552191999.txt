@@ -1,0 +1,545 @@
+Project Title
+
+High FPS Dual RTSP AI Object Detection - Windows Desktop Software
+
+You are an expert Python Desktop Software Engineer.
+
+Build a complete production-ready Windows desktop software using Python + CustomTkinter.
+
+The software must be completely finished by you because Replit cannot access my local RTSP cameras.
+
+After completing the project, generate the complete source code and allow me to download the entire project folder as a ZIP file.
+
+Also generate all assets including icons, logo, documentation and requirements.
+
+Main Goal
+
+Create a professional Windows software that performs real-time AI Object Detection from my dual camera streams.
+
+Camera:
+
+RGB Stream
+
+rtsp://192.168.144.108:554/stream=1
+
+Thermal Stream
+
+rtsp://192.168.144.108:554/stream=2
+
+The software will be run on my Windows laptop.
+
+Everything must work completely offline after downloading.
+
+No cloud.
+
+No API.
+
+No internet required while running.
+
+Internet should only be required once for downloading the pretrained model.
+
+Technology
+
+Python 3.12
+
+CustomTkinter
+
+OpenCV
+
+Ultralytics YOLO
+
+PyAV
+
+FFmpeg
+
+ONNX Runtime
+
+NumPy
+
+Pillow
+
+Threading
+
+Multiprocessing
+
+Queue
+
+PyInstaller
+
+AI Model
+
+Use a pretrained object detection model.
+
+Prefer the fastest possible model.
+
+Example:
+
+YOLO11n
+
+or
+
+YOLOv10n
+
+or
+
+YOLOv9-tiny
+
+or any latest lightweight model with highest FPS.
+
+The software should automatically download the model during first run.
+
+After downloading, store it locally.
+
+Never download again.
+
+Software should work completely offline afterwards.
+
+Performance
+
+The software must be optimized for High FPS.
+
+Target:
+
+30–60 FPS if laptop GPU available.
+
+Highest possible FPS on CPU.
+
+Use:
+
+Frame skipping
+
+Separate capture threads
+
+Separate inference thread
+
+Separate UI thread
+
+Frame Queue
+
+ONNX Runtime
+
+FP16 when supported
+
+GPU acceleration if available
+
+CPU fallback
+
+Resize before inference
+
+Low latency decoding
+
+Async processing
+
+RTSP Features
+
+Support two simultaneous streams.
+
+RGB
+
+rtsp://192.168.144.108:554/stream=1
+
+Thermal
+
+rtsp://192.168.144.108:554/stream=2
+
+Each stream must reconnect automatically if disconnected.
+
+Display connection status.
+
+Reconnect automatically.
+
+UI Design
+
+Professional modern dark theme.
+
+CustomTkinter.
+
+Rounded corners.
+
+Modern buttons.
+
+Professional spacing.
+
+Responsive layout.
+
+Left Panel
+
+RGB camera
+
+Middle Panel
+
+Thermal camera
+
+Right Panel
+
+Detection Controls
+
+Statistics
+
+Model Information
+
+FPS
+
+GPU Status
+
+CPU Usage
+
+RAM Usage
+
+Detection Count
+
+Top Toolbar
+
+Start Detection
+
+Stop Detection
+
+Pause
+
+Resume
+
+Take Screenshot
+
+Record Video
+
+Settings
+
+Exit
+
+Bottom Status Bar
+
+Current FPS
+
+GPU
+
+CPU
+
+RAM
+
+Resolution
+
+Model Name
+
+Detection Status
+
+RTSP Status
+
+Object Detection
+
+Draw beautiful bounding boxes.
+
+Different color for every class.
+
+Display
+
+Class Name
+
+Confidence
+
+Tracking ID
+
+FPS
+
+Detection Count
+
+Tracking
+
+Enable object tracking.
+
+Use ByteTrack.
+
+Persistent IDs.
+
+Screenshot
+
+Capture current frame.
+
+Save automatically.
+
+PNG format.
+
+Timestamp filename.
+
+Recording
+
+Record processed video.
+
+MP4
+
+Start
+
+Stop
+
+Save
+
+Detection Log
+
+Store
+
+Time
+
+Object
+
+Confidence
+
+Camera
+
+CSV file
+
+Export
+
+CSV
+
+TXT
+
+JSON
+
+Detection report
+
+Settings
+
+Confidence Slider
+
+IOU Slider
+
+Input Resolution
+
+Theme
+
+Enable GPU
+
+Enable CPU
+
+Maximum FPS
+
+Frame Skip
+
+Save Settings
+
+Software should remember settings.
+
+Keyboard Shortcuts
+
+Space
+
+Pause
+
+Ctrl+S
+
+Screenshot
+
+Ctrl+R
+
+Record
+
+ESC
+
+Exit
+
+Mouse Features
+
+Zoom
+
+Pan
+
+Double click Fullscreen
+
+Window Features
+
+Resizable
+
+Maximize
+
+Fullscreen
+
+Remember window position
+
+Remember last settings
+
+Error Handling
+
+No crashes.
+
+Proper popup messages.
+
+Reconnect automatically.
+
+Gracefully recover from camera disconnect.
+
+Code Quality
+
+Modular architecture.
+
+main.py
+
+ui/
+
+ai/
+
+camera/
+
+tracking/
+
+utils/
+
+config/
+
+icons/
+
+assets/
+
+models/
+
+logs/
+
+recordings/
+
+screenshots/
+
+
+Configuration
+
+Store configuration in JSON.
+
+Requirements
+
+Generate
+
+requirements.txt
+
+Installer
+
+Generate PyInstaller build script.
+
+Generate executable build command.
+
+Documentation
+
+Generate:
+
+README.md
+
+Installation Guide
+
+VS Code Guide
+
+How to install Python
+
+How to install dependencies
+
+How to run software
+
+How to build EXE
+
+Troubleshooting Guide
+
+VS Code Instructions
+
+Include complete instructions:
+
+Create virtual environment
+
+Install requirements
+
+Run
+
+python main.py
+
+Build executable
+
+pyinstaller --onefile
+
+or
+
+pyinstaller app.spec
+
+Offline Requirement
+
+After model download:
+
+Everything must work offline.
+
+No internet.
+
+No cloud.
+
+No API.
+
+Software Logo
+
+Design a modern logo.
+
+Theme:
+
+AI
+
+Vision
+
+Drone
+
+Thermal Camera
+
+RGB Camera
+
+Blue + Orange
+
+Transparent PNG
+
+SVG
+
+ICO
+
+Software Icon
+
+Generate Windows ICO.
+
+Multiple resolutions.
+
+Professional appearance.
+
+Software Name
+
+DualVision AI Detector
+
+Generate splash screen.
+
+Generate About dialog.
+
+Generate version information.
+
+Testing
+
+Before finishing,
+
+verify every module.
+
+Check imports.
+
+Fix all syntax errors.
+
+Fix dependency errors.
+
+Ensure project runs without modification.
+
+Final Output
+
+When the project is completed:
+
+Generate every source file.
+Generate all assets.
+Generate logo.
+Generate icon.
+Generate README.
+Generate requirements.txt.
+Generate build script.
+Generate PyInstaller spec.
+Generate VS Code setup guide.
+Package everything into one downloadable ZIP project.
+
+Do not leave placeholders.
+
+Do not leave TODO comments.
+
+Complete every feature.
+
+Deliver a fully working offline Windows desktop application ready to run in VS Code.
