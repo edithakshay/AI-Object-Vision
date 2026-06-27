@@ -1,0 +1,59 @@
+(venv) PS C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI> python main.py
+[2026-06-27 15:16:34] [INFO] [DualVisionAI] ============================================================
+[2026-06-27 15:16:34] [INFO] [DualVisionAI] DualVision AI Detector v1.0.0 starting ...
+[2026-06-27 15:16:34] [INFO] [DualVisionAI] ============================================================
+[2026-06-27 15:16:42] [INFO] [DualVisionAI] Launching main window ...
+invalid command name "1995429091904check_dpi_scaling"
+    while executing
+"1995429091904check_dpi_scaling"
+    ("after" script)
+invalid command name "1995361270784update"
+    while executing
+"1995361270784update"
+    ("after" script)
+Traceback (most recent call last):
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\main.py", line 100, in <module>
+    main()
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\main.py", line 93, in main
+    app = MainWindow(settings)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\main_window.py", line 46, in __init__
+    self._build_ui()
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\main_window.py", line 127, in _build_ui
+    self._rgb_panel = CameraPanel(content, title="RGB Camera")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\camera_panel.py", line 13, in __init__
+    super().__init__(parent, fg_color="#0A0F1E",
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\venv\Lib\site-packages\customtkinter\windows\widgets\ctk_frame.py", line 65, in __init__
+    self._draw(no_color_updates=True)
+TypeError: CameraPanel._draw() got an unexpected keyword argument 'no_color_updates'
+(venv) PS C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI> python main.py
+[2026-06-27 15:16:54] [INFO] [DualVisionAI] ============================================================
+[2026-06-27 15:16:54] [INFO] [DualVisionAI] DualVision AI Detector v1.0.0 starting ...
+[2026-06-27 15:16:54] [INFO] [DualVisionAI] ============================================================
+[2026-06-27 15:16:59] [INFO] [DualVisionAI] Launching main window ...
+invalid command name "2308948163264update"
+    while executing
+"2308948163264update"
+    ("after" script)
+invalid command name "2308924463424check_dpi_scaling"
+    while executing
+"2308924463424check_dpi_scaling"
+    ("after" script)
+Traceback (most recent call last):
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\main.py", line 100, in <module>
+    main()
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\main.py", line 93, in main
+    app = MainWindow(settings)
+          ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\main_window.py", line 46, in __init__
+    self._build_ui()
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\main_window.py", line 127, in _build_ui
+    self._rgb_panel = CameraPanel(content, title="RGB Camera")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\ui\camera_panel.py", line 13, in __init__
+    super().__init__(parent, fg_color="#0A0F1E",
+  File "C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI\venv\Lib\site-packages\customtkinter\windows\widgets\ctk_frame.py", line 65, in __init__
+    self._draw(no_color_updates=True)
+TypeError: CameraPanel._draw() got an unexpected keyword argument 'no_color_updates'
+(venv) PS C:\Users\EDITHAK\Downloads\crack\DualVisionAI_v1.0.0\DualVisionAI> 

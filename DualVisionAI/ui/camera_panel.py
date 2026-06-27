@@ -80,14 +80,14 @@ class CameraPanel(ctk.CTkFrame):
                      det_count: int = 0, inf_ms: float = 0.0):
         with self._lock:
             self._current_frame = frame_bgr
-        self._draw(frame_bgr, fps, det_count, inf_ms)
+        self._render_frame(frame_bgr, fps, det_count, inf_ms)
 
     def set_status(self, connected: bool, status_text: str = ""):
         color = "#22C55E" if connected else "#EF4444"
         self._status_dot.configure(text_color=color)
         self._status_label.configure(text=status_text or ("Connected" if connected else "Disconnected"))
 
-    def _draw(self, frame, fps, det_count, inf_ms):
+    def _render_frame(self, frame, fps, det_count, inf_ms):
         if frame is None:
             return
         try:
