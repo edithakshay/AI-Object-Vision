@@ -1,5 +1,5 @@
 """
-AI Detector — wraps Ultralytics YOLO (PT) with optional ONNX Runtime fallback.
+AI Detector — wraps Ultralytics YOLO with automatic fallback download.
 Runs inference in a dedicated thread; callers push frames and pull results.
 """
 import cv2
@@ -13,11 +13,11 @@ from pathlib import Path
 logger = logging.getLogger("DualVisionAI.detector")
 
 COCO_PALETTE = [
-    (255, 56, 56), (255, 157, 151), (255, 112, 31), (255, 178, 29),
-    (207, 210, 49), (72, 249, 10), (146, 204, 23), (61, 219, 134),
-    (26, 147, 52), (0, 212, 187), (44, 153, 168), (0, 194, 255),
-    (52, 69, 147), (100, 115, 255), (0, 24, 236), (132, 56, 255),
-    (82, 0, 133), (203, 56, 255), (255, 149, 200), (255, 55, 199),
+    (255, 56, 56),   (255, 157, 151), (255, 112, 31),  (255, 178, 29),
+    (207, 210, 49),  (72, 249, 10),   (146, 204, 23),  (61, 219, 134),
+    (26, 147, 52),   (0, 212, 187),   (44, 153, 168),  (0, 194, 255),
+    (52, 69, 147),   (100, 115, 255), (0, 24, 236),    (132, 56, 255),
+    (82, 0, 133),    (203, 56, 255),  (255, 149, 200), (255, 55, 199),
 ]
 
 
@@ -43,6 +43,7 @@ class Detector:
                  iou: float = 0.45, use_gpu: bool = True,
                  input_size: int = 640, frame_skip: int = 1):
         self.model_path = Path(model_path)
+        self.model_name = self.model_path.name  # e.g. "yolov8n.pt"
         self.conf = conf
         self.iou = iou
         self.use_gpu = use_gpu
@@ -71,15 +72,42 @@ class Detector:
 
     def load(self) -> bool:
         try:
-            logger.info(f"Loading model: {self.model_path}")
             from ultralytics import YOLO
-            device = "0" if self.use_gpu else "cpu"
-            self._model = YOLO(str(self.model_path))
-            self._model.to(device if self.use_gpu else "cpu")
+            logger.info(f"Loading model: {self.model_name}")
+
+            # Determine device
+            device = "cpu"
+            if self.use_gpu:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        device = "0"
+                except ImportError:
+                    pass
+
+            # Try loading from local path first; fall back to letting
+            # Ultralytics auto-download by model name
+            loaded_from_path = False
+            if self.model_path.exists() and self.model_path.stat().st_size > 100_000:
+                try:
+                    self._model = YOLO(str(self.model_path))
+                    loaded_from_path = True
+                    logger.info(f"Loaded from local path: {self.model_path}")
+                except Exception as e:
+                    logger.warning(f"Local load failed ({e}), trying auto-download ...")
+
+            if not loaded_from_path:
+                # Let Ultralytics handle download + caching automatically
+                logger.info(f"Auto-downloading model: {self.model_name}")
+                self._model = YOLO(self.model_name)
+                logger.info(f"Model auto-downloaded: {self.model_name}")
+
+            self._model.to(device if device != "cpu" else "cpu")
             self._class_names = list(self._model.names.values())
             self._loaded = True
-            logger.info(f"Model loaded: {len(self._class_names)} classes, device={device}")
+            logger.info(f"Model ready — {len(self._class_names)} classes, device={device}")
             return True
+
         except Exception as e:
             logger.error(f"Model load failed: {e}")
             self._loaded = False
@@ -189,15 +217,10 @@ class Detector:
             t0 = time.time()
             results = {}
 
-            frames_to_run = {}
             if rgb_frame is not None:
-                frames_to_run["rgb"] = rgb_frame
+                results["rgb"] = self._run_inference(rgb_frame)
             if thermal_frame is not None:
-                frames_to_run["thermal"] = thermal_frame
-
-            for key, frame in frames_to_run.items():
-                res = self._run_inference(frame)
-                results[key] = res
+                results["thermal"] = self._run_inference(thermal_frame)
 
             inf_ms = (time.time() - t0) * 1000
             self._update_fps()
@@ -214,7 +237,6 @@ class Detector:
         result = DetectionResult()
         if frame is None or self._model is None:
             return result
-
         try:
             resized = cv2.resize(frame, (self.input_size, self.input_size))
             preds = self._model.predict(
@@ -237,14 +259,12 @@ class Detector:
 
             for box in pred.boxes:
                 xyxy = box.xyxy[0].cpu().numpy().astype(float)
-                x1 = float(xyxy[0] * sx)
-                y1 = float(xyxy[1] * sy)
-                x2 = float(xyxy[2] * sx)
-                y2 = float(xyxy[3] * sy)
-
+                x1, y1, x2, y2 = (float(xyxy[0] * sx), float(xyxy[1] * sy),
+                                   float(xyxy[2] * sx), float(xyxy[3] * sy))
                 cls_id = int(box.cls[0])
                 conf = float(box.conf[0])
-                name = self._class_names[cls_id] if cls_id < len(self._class_names) else str(cls_id)
+                name = (self._class_names[cls_id]
+                        if cls_id < len(self._class_names) else str(cls_id))
 
                 result.boxes.append([x1, y1, x2, y2])
                 result.class_ids.append(cls_id)
@@ -291,5 +311,4 @@ def draw_detections(frame, result: DetectionResult,
         cv2.rectangle(out, (x1, by1), (x1 + tw + 4, y1), color, -1)
         cv2.putText(out, label, (x1 + 2, y1 - baseline - 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-
     return out
