@@ -25,8 +25,9 @@ from ui.about_dialog import AboutDialog
 logger = logging.getLogger("DualVisionAI.mainwindow")
 VERSION = "1.0.0"
 
-# How old (seconds) a result can be before bounding boxes are hidden
-RESULT_MAX_AGE = 1.5
+# How old (seconds) a result can be before bounding boxes are hidden.
+# Keep short so stale boxes from slow inference disappear quickly.
+RESULT_MAX_AGE = 0.8
 
 # UI refresh rate — independent of inference speed
 UI_FPS = 30
@@ -91,9 +92,11 @@ class MainWindow(ctk.CTk):
 
         self._model_manager = ModelManager(model_dir="models")
         self._detector: Detector | None = None
-        # Tighter max_age so ghost boxes disappear quickly (3 inference cycles)
-        self._rgb_tracker = ByteTracker(max_age=3, iou_threshold=0.35)
-        self._thermal_tracker = ByteTracker(max_age=3, iou_threshold=0.35)
+        # max_age=0 → track is REMOVED immediately if not matched in next
+        # inference cycle. This is the key fix for ghost bounding boxes:
+        # the moment YOLO stops seeing an object, its box disappears.
+        self._rgb_tracker = ByteTracker(max_age=0, iou_threshold=0.35)
+        self._thermal_tracker = ByteTracker(max_age=0, iou_threshold=0.35)
 
         self._screenshot_util = ScreenshotUtil(
             output_dir=s.get("screenshots", "output_dir", "screenshots"))

@@ -104,6 +104,30 @@ def download_model():
         return False
 
 
+def _check_gpu():
+    print("[GPU CHECK]")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            name = torch.cuda.get_device_name(0)
+            vram = torch.cuda.get_device_properties(0).total_memory // (1024 ** 2)
+            print(f"  [OK] CUDA GPU found: {name}  ({vram} MB VRAM)")
+            print("       GPU will be used automatically when you click Start.")
+        else:
+            print("  [!] No CUDA GPU detected.")
+            print("      To enable GPU, install PyTorch with CUDA:")
+            print()
+            print("      pip uninstall torch torchvision -y")
+            print("      pip install torch torchvision --index-url"
+                  " https://download.pytorch.org/whl/cu121")
+            print()
+            print("      (Replace cu121 with your CUDA version — see pytorch.org)")
+    except ImportError:
+        print("  [!] PyTorch not installed — GPU unavailable.")
+        print("      pip install torch torchvision --index-url"
+              " https://download.pytorch.org/whl/cu121")
+
+
 def verify_model():
     if not MODEL_DEST.exists():
         return False
@@ -125,6 +149,11 @@ def main():
         print("See manual instructions above.")
         input("\nPress Enter to exit ...")
         sys.exit(1)
+
+    # GPU check
+    print("\n" + "-" * 54)
+    _check_gpu()
+    print("-" * 54)
 
     print("\n" + "=" * 54)
     print("  Setup complete! You can now run the app:")
