@@ -104,6 +104,21 @@ def download_model():
         return False
 
 
+def _generate_icons():
+    print("[ICON GENERATION]")
+    try:
+        from PIL import Image
+        assets_dir = Path(__file__).parent / "assets"
+        sys.path.insert(0, str(Path(__file__).parent))
+        from assets.make_icon import generate
+        generate(assets_dir)
+    except ImportError:
+        print("  [!] Pillow not installed — skipping icon generation.")
+        print("      pip install pillow")
+    except Exception as e:
+        print(f"  [!] Icon generation failed (non-fatal): {e}")
+
+
 def _check_gpu():
     print("[GPU CHECK]")
     try:
@@ -149,6 +164,11 @@ def main():
         print("See manual instructions above.")
         input("\nPress Enter to exit ...")
         sys.exit(1)
+
+    # Generate logo + icon
+    print("\n" + "-" * 54)
+    _generate_icons()
+    print("-" * 54)
 
     # GPU check
     print("\n" + "-" * 54)

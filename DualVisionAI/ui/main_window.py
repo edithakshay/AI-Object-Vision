@@ -123,6 +123,31 @@ class MainWindow(ctk.CTk):
             self.state("zoomed")
         self.configure(fg_color="#050A14")
         self.protocol("WM_DELETE_WINDOW", self._on_exit)
+        self._set_window_icon()
+
+    def _set_window_icon(self):
+        """Set the taskbar / title-bar icon. Auto-generates if missing."""
+        try:
+            from pathlib import Path
+            assets = Path(__file__).parent.parent / "assets"
+            ico = assets / "icon.ico"
+            png = assets / "logo.png"
+
+            # Generate on first run
+            if not ico.exists() or not png.exists():
+                from assets.make_icon import generate
+                generate(assets)
+
+            if ico.exists():
+                self.iconbitmap(str(ico))
+            elif png.exists():
+                from PIL import Image, ImageTk
+                img = Image.open(str(png)).resize((64, 64))
+                photo = ImageTk.PhotoImage(img)
+                self.iconphoto(True, photo)
+                self._icon_ref = photo          # prevent GC
+        except Exception as e:
+            logger.debug(f"Icon not set: {e}")  # non-fatal
 
     def _build_ui(self):
         callbacks = {

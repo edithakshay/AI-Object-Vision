@@ -7,11 +7,24 @@ from pathlib import Path
 logger = logging.getLogger("DualVisionAI.model")
 
 SUPPORTED_MODELS = [
+    # YOLOv8 family
     "yolov8n.pt",
     "yolov8s.pt",
     "yolov8m.pt",
+    "yolov8l.pt",
+    "yolov8x.pt",
+    # YOLO11 family
     "yolo11n.pt",
     "yolo11s.pt",
+    "yolo11m.pt",
+    "yolo11l.pt",
+    "yolo11x.pt",
+    # YOLO12 family (latest — 2025)
+    "yolo12n.pt",
+    "yolo12s.pt",
+    "yolo12m.pt",
+    "yolo12l.pt",
+    "yolo12x.pt",
 ]
 
 
