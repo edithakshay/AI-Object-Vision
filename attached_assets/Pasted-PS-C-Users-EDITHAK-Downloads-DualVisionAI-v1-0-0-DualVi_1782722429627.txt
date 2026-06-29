@@ -1,0 +1,33 @@
+PS C:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI> python -u "c:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI\download_all_models.py"
+
+╔══════════════════════════════════════════════════════════════╗
+║         DualVision AI Detector — Model Downloader            ║
+║  Downloads all YOLO models once.  Fully offline after that.  ║
+╚══════════════════════════════════════════════════════════════╝
+
+[STEP 1] Checking dependencies …
+Traceback (most recent call last):
+  File "c:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI\download_all_models.py", line 186, in <module>
+    main()
+  File "c:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI\download_all_models.py", line 148, in main
+    if not _check_dependencies():
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI\download_all_models.py", line 70, in _check_dependencies
+    import ultralytics
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\ultralytics\__init__.py", line 11, in <module>
+    from ultralytics.models import NAS, RTDETR, SAM, YOLO, FastSAM, YOLOWorld
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\ultralytics\models\__init__.py", line 3, in <module>
+    from .fastsam import FastSAM
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\ultralytics\models\fastsam\__init__.py", line 3, in <module>
+    from .model import FastSAM
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\ultralytics\models\fastsam\model.py", line 5, in <module>
+    from ultralytics.engine.model import Model
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\ultralytics\engine\model.py", line 8, in <module>
+    import torch
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\torch\__init__.py", line 270, in <module>
+    _load_dll_libraries()
+  File "C:\Users\EDITHAK\AppData\Roaming\Python\Python312\site-packages\torch\__init__.py", line 246, in _load_dll_libraries
+    res = kernel32.LoadLibraryExW(dll, None, 0x00001100)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+PS C:\Users\EDITHAK\Downloads\DualVisionAI_v1.0.0\DualVisionAI> 
