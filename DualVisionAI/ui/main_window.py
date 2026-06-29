@@ -25,10 +25,6 @@ from ui.about_dialog import AboutDialog
 logger = logging.getLogger("DualVisionAI.mainwindow")
 VERSION = "1.0.0"
 
-# How old (seconds) a result can be before bounding boxes are hidden.
-# Keep short so stale boxes from slow inference disappear quickly.
-RESULT_MAX_AGE = 0.8
-
 # UI refresh rate — independent of inference speed
 UI_FPS = 30
 
@@ -43,10 +39,20 @@ class MainWindow(ctk.CTk):
         self._current_device = "CPU"
         self._current_model_name = ""
 
-        # Last result snapshot used for drawing — updated from inference thread
+        # Last result held for continuous overlay — cleared only when YOLO
+        # returns empty (object left frame), NOT by a timer.
+        # draw_result holds the last non-empty inference result per stream.
+        # Set to None only when YOLO returns empty (object left frame).
+        # Never time-expired — this gives continuous overlay for all model sizes.
         self._rgb_draw_result: DetectionResult | None = None
         self._thermal_draw_result: DetectionResult | None = None
-        self._result_swap_lock = threading.Lock()
+
+        # Timestamps of the last inference we processed (to detect new arrivals)
+        self._rgb_last_inf_ts: float = 0.0
+        self._thermal_last_inf_ts: float = 0.0
+
+        # Live inference latency shown in the control panel (updated per inference)
+        self._last_inf_ms: float = 0.0
 
         # Buffered frames for display (latest only)
         self._rgb_display_frame = None
@@ -214,117 +220,134 @@ class MainWindow(ctk.CTk):
             time.sleep(sleep)
 
     def _process_one_frame(self):
-        rgb_frame = self._rgb_stream.read()
+        rgb_frame    = self._rgb_stream.read()
         thermal_frame = self._thermal_stream.read()
 
         if not self._detecting or self._paused or self._detector is None:
-            # Store raw frames for display even when not detecting
             with self._frame_lock:
-                if rgb_frame is not None:
-                    self._rgb_display_frame = rgb_frame
-                if thermal_frame is not None:
-                    self._thermal_display_frame = thermal_frame
+                if rgb_frame    is not None: self._rgb_display_frame     = rgb_frame
+                if thermal_frame is not None: self._thermal_display_frame = thermal_frame
             return
 
-        # Push raw frames to inference thread
-        if rgb_frame is not None:
-            self._detector.push_rgb(rgb_frame)
-        if thermal_frame is not None:
-            self._detector.push_thermal(thermal_frame)
+        # Push live frames to inference thread (it runs independently)
+        if rgb_frame    is not None: self._detector.push_rgb(rgb_frame)
+        if thermal_frame is not None: self._detector.push_thermal(thermal_frame)
 
         enable_tracking = self._settings.get("detection", "enable_tracking", True)
 
-        # --- RGB result ---
+        # ── RGB ──────────────────────────────────────────────────────────────
         rgb_result = self._detector.get_rgb_result()
-        rgb_display = rgb_frame  # default: raw frame
 
-        if rgb_result is not None and rgb_result.is_fresh(RESULT_MAX_AGE):
-            if not rgb_result.is_empty() and enable_tracking:
-                dets = [{"box": b, "class_id": c, "confidence": cf}
-                        for b, c, cf in zip(rgb_result.boxes,
-                                            rgb_result.class_ids,
-                                            rgb_result.confidences)]
-                tracked = self._rgb_tracker.update(dets)
-                rgb_result.boxes = [t["box"] for t in tracked]
-                rgb_result.class_ids = [t["class_id"] for t in tracked]
-                rgb_result.confidences = [t["confidence"] for t in tracked]
-                rgb_result.class_names = [
-                    (self._detector.class_names[t["class_id"]]
-                     if t["class_id"] < len(self._detector.class_names) else "?")
-                    for t in tracked]
-                rgb_result.track_ids = [t["track_id"] for t in tracked]
+        # Only act when a NEW inference result has arrived (timestamp changed).
+        # This means we log & update draw_result exactly ONCE per inference,
+        # regardless of how long inference takes (works for all model sizes).
+        if rgb_result is not None and rgb_result.timestamp != self._rgb_last_inf_ts:
+            self._rgb_last_inf_ts = rgb_result.timestamp
+            self._last_inf_ms     = rgb_result.inference_ms
 
-            if rgb_frame is not None:
-                rgb_display = draw_detections(rgb_frame, rgb_result)
+            if rgb_result.is_empty():
+                # Object left frame → clear boxes immediately
+                self._rgb_draw_result = None
+                if enable_tracking:
+                    self._rgb_tracker.reset()
+            else:
+                # Apply tracker to lock in stable IDs
+                if enable_tracking:
+                    dets = [{"box": b, "class_id": c, "confidence": cf}
+                            for b, c, cf in zip(rgb_result.boxes,
+                                                rgb_result.class_ids,
+                                                rgb_result.confidences)]
+                    tracked = self._rgb_tracker.update(dets)
+                    rgb_result.boxes       = [t["box"]        for t in tracked]
+                    rgb_result.class_ids   = [t["class_id"]   for t in tracked]
+                    rgb_result.confidences = [t["confidence"]  for t in tracked]
+                    rgb_result.class_names = [
+                        (self._detector.class_names[t["class_id"]]
+                         if t["class_id"] < len(self._detector.class_names) else "?")
+                        for t in tracked]
+                    rgb_result.track_ids = [t["track_id"] for t in tracked]
 
-            # Log new detections (batched, won't spam the UI thread)
-            for i in range(len(rgb_result.boxes)):
-                name = rgb_result.class_names[i] if i < len(rgb_result.class_names) else ""
-                conf = rgb_result.confidences[i] if i < len(rgb_result.confidences) else 0
-                tid = rgb_result.track_ids[i] if i < len(rgb_result.track_ids) else 0
-                box = rgb_result.boxes[i] if i < len(rgb_result.boxes) else [0, 0, 0, 0]
-                self._det_log.log("RGB", name, conf, tid, box)
-                with self._log_lock:
-                    self._pending_log.append(("RGB", name, conf, tid))
-        else:
-            # Stale or no result — draw raw frame (no ghost boxes)
-            if rgb_frame is not None:
-                rgb_display = rgb_frame
-            if enable_tracking:
-                self._rgb_tracker.reset()
+                # Store for continuous overlay across display frames
+                self._rgb_draw_result = rgb_result
+                self._session_detection_count += len(rgb_result.boxes)
 
-        # --- Thermal result ---
+                # Log ONCE per inference — never on redisplay frames
+                for i in range(len(rgb_result.boxes)):
+                    name = (rgb_result.class_names[i]
+                            if i < len(rgb_result.class_names) else "")
+                    conf = (rgb_result.confidences[i]
+                            if i < len(rgb_result.confidences) else 0.0)
+                    tid  = (rgb_result.track_ids[i]
+                            if i < len(rgb_result.track_ids)  else 0)
+                    box  = (rgb_result.boxes[i]
+                            if i < len(rgb_result.boxes)       else [0,0,0,0])
+                    self._det_log.log("RGB", name, conf, tid, box)
+                    with self._log_lock:
+                        self._pending_log.append(("RGB", name, conf, tid))
+
+        # Draw: overlay last valid result on the CURRENT live frame.
+        # Boxes persist between slow inferences → no flickering with M/L/X.
+        rgb_display = (draw_detections(rgb_frame, self._rgb_draw_result)
+                       if rgb_frame is not None else None)
+
+        # ── Thermal ──────────────────────────────────────────────────────────
         thermal_result = self._detector.get_thermal_result()
-        thermal_display = thermal_frame
 
-        if thermal_result is not None and thermal_result.is_fresh(RESULT_MAX_AGE):
-            if not thermal_result.is_empty() and enable_tracking:
-                dets = [{"box": b, "class_id": c, "confidence": cf}
-                        for b, c, cf in zip(thermal_result.boxes,
-                                            thermal_result.class_ids,
-                                            thermal_result.confidences)]
-                tracked = self._thermal_tracker.update(dets)
-                thermal_result.boxes = [t["box"] for t in tracked]
-                thermal_result.class_ids = [t["class_id"] for t in tracked]
-                thermal_result.confidences = [t["confidence"] for t in tracked]
-                thermal_result.class_names = [
-                    (self._detector.class_names[t["class_id"]]
-                     if t["class_id"] < len(self._detector.class_names) else "?")
-                    for t in tracked]
-                thermal_result.track_ids = [t["track_id"] for t in tracked]
+        if (thermal_result is not None
+                and thermal_result.timestamp != self._thermal_last_inf_ts):
+            self._thermal_last_inf_ts = thermal_result.timestamp
+            if self._last_inf_ms == 0:
+                self._last_inf_ms = thermal_result.inference_ms
 
-            if thermal_frame is not None:
-                thermal_display = draw_detections(thermal_frame, thermal_result)
-        else:
-            if thermal_frame is not None:
-                thermal_display = thermal_frame
-            if enable_tracking:
-                self._thermal_tracker.reset()
+            if thermal_result.is_empty():
+                self._thermal_draw_result = None
+                if enable_tracking:
+                    self._thermal_tracker.reset()
+            else:
+                if enable_tracking:
+                    dets = [{"box": b, "class_id": c, "confidence": cf}
+                            for b, c, cf in zip(thermal_result.boxes,
+                                                thermal_result.class_ids,
+                                                thermal_result.confidences)]
+                    tracked = self._thermal_tracker.update(dets)
+                    thermal_result.boxes       = [t["box"]       for t in tracked]
+                    thermal_result.class_ids   = [t["class_id"]  for t in tracked]
+                    thermal_result.confidences = [t["confidence"] for t in tracked]
+                    thermal_result.class_names = [
+                        (self._detector.class_names[t["class_id"]]
+                         if t["class_id"] < len(self._detector.class_names) else "?")
+                        for t in tracked]
+                    thermal_result.track_ids = [t["track_id"] for t in tracked]
 
-        # Update session count only when result is new (use inference timestamp)
-        if rgb_result and rgb_result.is_fresh(0.15):
-            self._session_detection_count += len(rgb_result.boxes)
-        if thermal_result and thermal_result.is_fresh(0.15):
-            self._session_detection_count += len(thermal_result.boxes)
+                self._thermal_draw_result = thermal_result
+                self._session_detection_count += len(thermal_result.boxes)
+
+                for i in range(len(thermal_result.boxes)):
+                    name = (thermal_result.class_names[i]
+                            if i < len(thermal_result.class_names) else "")
+                    conf = (thermal_result.confidences[i]
+                            if i < len(thermal_result.confidences) else 0.0)
+                    tid  = (thermal_result.track_ids[i]
+                            if i < len(thermal_result.track_ids)  else 0)
+                    box  = (thermal_result.boxes[i]
+                            if i < len(thermal_result.boxes)       else [0,0,0,0])
+                    self._det_log.log("Thermal", name, conf, tid, box)
+                    with self._log_lock:
+                        self._pending_log.append(("Thermal", name, conf, tid))
+
+        thermal_display = (draw_detections(thermal_frame, self._thermal_draw_result)
+                           if thermal_frame is not None else None)
 
         # Write to recorder
-        if rgb_display is not None and self._recorder.is_recording("RGB"):
-            self._recorder.write("RGB", rgb_display)
+        if rgb_display     is not None and self._recorder.is_recording("RGB"):
+            self._recorder.write("RGB",     rgb_display)
         if thermal_display is not None and self._recorder.is_recording("Thermal"):
             self._recorder.write("Thermal", thermal_display)
 
         # Swap in display frames atomically
         with self._frame_lock:
-            if rgb_display is not None:
-                self._rgb_display_frame = rgb_display
-            if thermal_display is not None:
-                self._thermal_display_frame = thermal_display
-
-        with self._result_swap_lock:
-            if rgb_result is not None:
-                self._rgb_draw_result = rgb_result
-            if thermal_result is not None:
-                self._thermal_draw_result = thermal_result
+            if rgb_display     is not None: self._rgb_display_frame     = rgb_display
+            if thermal_display is not None: self._thermal_display_frame = thermal_display
 
     # ------------------------------------------------------------------
     # UI tick — runs on Tkinter's main thread via after()
@@ -352,23 +375,11 @@ class MainWindow(ctk.CTk):
             rgb_frame = self._rgb_display_frame
             thermal_frame = self._thermal_display_frame
 
-        with self._result_swap_lock:
-            rgb_result = self._rgb_draw_result
-            thermal_result = self._thermal_draw_result
-
         det = self._detector
         fps_inf = det.fps_inference if det else 0.0
-        inf_ms = 0.0
-        rgb_det_count = 0
-        thermal_det_count = 0
-
-        if rgb_result and rgb_result.is_fresh(RESULT_MAX_AGE):
-            rgb_det_count = len(rgb_result.boxes)
-            inf_ms = rgb_result.inference_ms
-        if thermal_result and thermal_result.is_fresh(RESULT_MAX_AGE):
-            thermal_det_count = len(thermal_result.boxes)
-            if inf_ms == 0:
-                inf_ms = thermal_result.inference_ms
+        inf_ms = self._last_inf_ms
+        rgb_det_count     = len(self._rgb_draw_result.boxes)     if self._rgb_draw_result     else 0
+        thermal_det_count = len(self._thermal_draw_result.boxes) if self._thermal_draw_result else 0
 
         # Camera panels
         fps_rgb = self._rgb_stream.fps_actual
@@ -461,9 +472,11 @@ class MainWindow(ctk.CTk):
             self._detector = detector
             self._rgb_tracker.reset()
             self._thermal_tracker.reset()
-            with self._result_swap_lock:
-                self._rgb_draw_result = None
-                self._thermal_draw_result = None
+            self._rgb_draw_result     = None
+            self._thermal_draw_result = None
+            self._rgb_last_inf_ts     = 0.0
+            self._thermal_last_inf_ts = 0.0
+            self._last_inf_ms         = 0.0
             self._session_detection_count = 0
             self._detecting = True
             self._paused = False
@@ -480,9 +493,11 @@ class MainWindow(ctk.CTk):
             self._detector.clear_results()
         self._rgb_tracker.reset()
         self._thermal_tracker.reset()
-        with self._result_swap_lock:
-            self._rgb_draw_result = None
-            self._thermal_draw_result = None
+        self._rgb_draw_result     = None
+        self._thermal_draw_result = None
+        self._rgb_last_inf_ts     = 0.0
+        self._thermal_last_inf_ts = 0.0
+        self._last_inf_ms         = 0.0
         self._recorder.stop_all()
         self._control_panel.set_recording_status(False, "")
         logger.info("Detection stopped.")

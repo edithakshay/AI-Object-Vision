@@ -289,13 +289,15 @@ class Detector:
 # ------------------------------------------------------------------
 # Drawing helper — no stale boxes, no ghost boxes
 # ------------------------------------------------------------------
-def draw_detections(frame, result: DetectionResult,
-                    result_max_age: float = 0.8) -> np.ndarray:
-    """Draw boxes only when the result is fresh AND non-empty."""
+def draw_detections(frame, result: DetectionResult | None) -> np.ndarray:
+    """Draw boxes from result onto frame.
+    Pass result=None to get a clean frame (no boxes).
+    Freshness / ghost-box logic is handled by the caller (main_window worker).
+    """
     if frame is None:
         return frame
-    if result is None or result.is_empty() or not result.is_fresh(result_max_age):
-        return frame          # ← clean frame: no object → no box
+    if result is None or result.is_empty():
+        return frame          # ← clean frame: object gone or not yet detected
     out = frame.copy()
     for i, box in enumerate(result.boxes):
         x1, y1, x2, y2 = (int(v) for v in box)
