@@ -145,13 +145,7 @@ class SettingsDialog(ctk.CTkToplevel):
         self._update_download_ui(name)
 
     def _update_download_ui(self, name: str):
-        if name.startswith("yolo26"):
-            self._dl_btn.configure(state="disabled",
-                                   text="⬇ Not Released Yet")
-            self._dl_status.configure(
-                text="YOLO26 is not yet released by Ultralytics.",
-                text_color="#F59E0B")
-        elif self._model_mgr.is_downloaded(name):
+        if self._model_mgr.is_downloaded(name):
             self._dl_btn.configure(state="disabled",
                                    text="✓ Already Downloaded")
             self._dl_status.configure(

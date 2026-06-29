@@ -36,8 +36,30 @@ SUPPORTED_MODELS = [
     "yolo26x.pt",
 ]
 
-# Models that can actually be downloaded from Ultralytics right now
-_DOWNLOADABLE = {m for m in SUPPORTED_MODELS if not m.startswith("yolo26")}
+# All models are downloadable (YOLO26 URLs now confirmed at v8.4.0)
+_DOWNLOADABLE = set(SUPPORTED_MODELS)
+
+# Direct download URLs — used by ensure_model() fallback
+_URLS: dict[str, str] = {
+    # YOLOv8
+    "yolov8n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
+    "yolov8s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s.pt",
+    "yolov8m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m.pt",
+    "yolov8l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l.pt",
+    "yolov8x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x.pt",
+    # YOLO11
+    "yolo11n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
+    "yolo11s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+    "yolo11m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
+    "yolo11l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l.pt",
+    "yolo11x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt",
+    # YOLO26
+    "yolo26n.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt",
+    "yolo26s.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt",
+    "yolo26m.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt",
+    "yolo26l.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt",
+    "yolo26x.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt",
+}
 
 # Ultralytics cache search paths (Windows + Linux)
 _CACHE_ROOTS = [
@@ -114,42 +136,47 @@ class ModelManager:
 
     # ── download ─────────────────────────────────────────────────────────────
     def _download(self, name: str) -> Path | None:
+        """Download via direct HTTP (no torch/ultralytics import needed)."""
+        from urllib.request import urlretrieve
+        from urllib.error import URLError, HTTPError
+
         dest = self.get_model_path(name)
+        url  = _URLS.get(name)
+        if not url:
+            self._status(f"No download URL known for {name}.")
+            return None
+
         self._status(f"Downloading {name} …")
         self._progress(0.0)
+        tmp = dest.with_suffix(".tmp")
+
+        def _hook(blocks, block_size, total):
+            if total > 0:
+                pct = min(100.0, blocks * block_size * 100.0 / total)
+                self._progress(pct)
 
         try:
-            from ultralytics import YOLO
-            self._progress(10.0)
-            _ = YOLO(name)          # triggers Ultralytics auto-download
-            self._progress(80.0)
-
-            # 1) Check cwd (Ultralytics sometimes drops file here)
-            cwd_file = Path(name)
-            if cwd_file.exists() and cwd_file.stat().st_size > 100_000:
-                shutil.copy2(str(cwd_file), str(dest))
-                self._progress(100.0)
-                self._status(f"Model saved: {dest}")
-                return dest
-
-            # 2) Search Ultralytics cache directories
-            found = self._find_in_cache(name)
-            if found:
-                shutil.copy2(str(found), str(dest))
-                self._progress(100.0)
-                self._status(f"Model saved: {dest}")
-                return dest
-
-            # 3) Ultralytics manages the file internally — write marker
-            dest.write_text(f"managed:{name}")
+            urlretrieve(url, str(tmp), reporthook=_hook)
+            tmp.rename(dest)
+            mb = dest.stat().st_size / 1_048_576
             self._progress(100.0)
-            self._status(f"Model ready via Ultralytics cache: {name}")
+            self._status(f"Saved: {name} ({mb:.1f} MB)")
             return dest
 
-        except Exception as e:
+        except (HTTPError, URLError) as e:
             logger.error(f"Download failed for {name}: {e}")
             self._status(f"Download failed: {e}")
             self._progress(0.0)
+            if tmp.exists():
+                tmp.unlink()
+            return None
+
+        except Exception as e:
+            logger.error(f"Download error for {name}: {e}")
+            self._status(f"Error: {e}")
+            self._progress(0.0)
+            if tmp.exists():
+                tmp.unlink()
             return None
 
     def _find_in_cache(self, name: str) -> Path | None:

@@ -15,10 +15,13 @@ Model sizes (approximate):
     YOLOv8m  ~ 52 MB    YOLO11m  ~ 39 MB
     YOLOv8l  ~ 87 MB    YOLO11l  ~ 49 MB
     YOLOv8x  ~131 MB    YOLO11x  ~109 MB
+    YOLO26n  ~  6 MB
+    YOLO26s  ~ 20 MB
+    YOLO26m  ~ 50 MB
+    YOLO26l  ~ 85 MB
+    YOLO26x  ~125 MB
     ─────────────────────────────────────
-    TOTAL    ~519 MB
-
-NOTE: YOLO26 is not yet released by Ultralytics.
+    TOTAL    ~~759 MB
 """
 
 import sys
@@ -30,21 +33,27 @@ from urllib.request import urlretrieve, urlopen
 from urllib.error import URLError, HTTPError
 
 # ── Download URLs ─────────────────────────────────────────────────────────────
-# Ultralytics publishes all model weights as GitHub release assets.
-_BASE = "https://github.com/ultralytics/assets/releases/download/v8.3.0"
+# Each entry: (filename, size_mb, full_url)
+_V830 = "https://github.com/ultralytics/assets/releases/download/v8.3.0"
+_V840 = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 
 MODELS = [
-    # (filename,        approximate MB)
-    ("yolov8n.pt",   6),
-    ("yolov8s.pt",  22),
-    ("yolov8m.pt",  52),
-    ("yolov8l.pt",  87),
-    ("yolov8x.pt", 131),
-    ("yolo11n.pt",   5),
-    ("yolo11s.pt",  19),
-    ("yolo11m.pt",  39),
-    ("yolo11l.pt",  49),
-    ("yolo11x.pt", 109),
+    # (filename,       approx MB,  direct URL)
+    ("yolov8n.pt",   6,  f"{_V830}/yolov8n.pt"),
+    ("yolov8s.pt",  22,  f"{_V830}/yolov8s.pt"),
+    ("yolov8m.pt",  52,  f"{_V830}/yolov8m.pt"),
+    ("yolov8l.pt",  87,  f"{_V830}/yolov8l.pt"),
+    ("yolov8x.pt", 131,  f"{_V830}/yolov8x.pt"),
+    ("yolo11n.pt",   5,  f"{_V830}/yolo11n.pt"),
+    ("yolo11s.pt",  19,  f"{_V830}/yolo11s.pt"),
+    ("yolo11m.pt",  39,  f"{_V830}/yolo11m.pt"),
+    ("yolo11l.pt",  49,  f"{_V830}/yolo11l.pt"),
+    ("yolo11x.pt", 109,  f"{_V830}/yolo11x.pt"),
+    ("yolo26n.pt",   6,  f"{_V840}/yolo26n.pt"),
+    ("yolo26s.pt",  20,  f"{_V840}/yolo26s.pt"),
+    ("yolo26m.pt",  50,  f"{_V840}/yolo26m.pt"),
+    ("yolo26l.pt",  85,  f"{_V840}/yolo26l.pt"),
+    ("yolo26x.pt", 125,  f"{_V840}/yolo26x.pt"),
 ]
 
 MODEL_DIR = Path(__file__).parent / "models"
@@ -79,19 +88,13 @@ def _reporthook(block_num, block_size, total_size):
 
 
 # ── Downloader ────────────────────────────────────────────────────────────────
-def _url_for(name: str) -> str:
-    return f"{_BASE}/{name}"
-
-
-def download_model(name: str, size_mb: int) -> bool:
+def download_model(name: str, size_mb: int, url: str) -> bool:
     dest = MODEL_DIR / name
 
     if dest.exists() and dest.stat().st_size > 100_000:
         mb = dest.stat().st_size / 1_048_576
         print(f"  [skip] {name:<14}  already cached  ({mb:.1f} MB)")
         return True
-
-    url = _url_for(name)
     print(f"  [↓] {name:<14}  ~{size_mb} MB")
     _last_pct[0] = -1
     t0 = time.time()
@@ -154,10 +157,10 @@ def main():
     # Download each model
     print(f"[STEP 2] Downloading {len(MODELS)} models …\n")
     results: dict[str, bool] = {}
-    for i, (name, size_mb) in enumerate(MODELS, 1):
+    for i, (name, size_mb, url) in enumerate(MODELS, 1):
         print(f"  ({i}/{len(MODELS)})", end="  ", flush=True)
         try:
-            results[name] = download_model(name, size_mb)
+            results[name] = download_model(name, size_mb, url)
         except KeyboardInterrupt:
             print("\n\n  Download interrupted by user.")
             break
