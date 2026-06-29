@@ -19,12 +19,12 @@ SUPPORTED_MODELS = [
     "yolo11m.pt",
     "yolo11l.pt",
     "yolo11x.pt",
-    # YOLO12 family (latest — 2025)
-    "yolo12n.pt",
-    "yolo12s.pt",
-    "yolo12m.pt",
-    "yolo12l.pt",
-    "yolo12x.pt",
+    # YOLO26 family (latest)
+    "yolo26n.pt",
+    "yolo26s.pt",
+    "yolo26m.pt",
+    "yolo26l.pt",
+    "yolo26x.pt",
 ]
 
 

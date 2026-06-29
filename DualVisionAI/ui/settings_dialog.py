@@ -58,15 +58,15 @@ class SettingsDialog(ctk.CTkToplevel):
         self._use_fp16 = self._add_switch(scroll, "FP16 Precision",
                                           self._settings.get("inference", "use_fp16", True))
         _models = [
-            # ── YOLOv8 (stable) ──────────────────────────────────────
+            # ── YOLOv8 ───────────────────────────────────────────────
             "yolov8n.pt", "yolov8s.pt", "yolov8m.pt",
             "yolov8l.pt", "yolov8x.pt",
             # ── YOLO11 ───────────────────────────────────────────────
             "yolo11n.pt", "yolo11s.pt", "yolo11m.pt",
             "yolo11l.pt", "yolo11x.pt",
-            # ── YOLO12 (latest 2025) ──────────────────────────────────
-            "yolo12n.pt", "yolo12s.pt", "yolo12m.pt",
-            "yolo12l.pt", "yolo12x.pt",
+            # ── YOLO26 (latest) ───────────────────────────────────────
+            "yolo26n.pt", "yolo26s.pt", "yolo26m.pt",
+            "yolo26l.pt", "yolo26x.pt",
         ]
         self._model_name = self._add_option(scroll, "Model", _models,
                                             self._settings.get("inference", "model_name", "yolov8n.pt"))
