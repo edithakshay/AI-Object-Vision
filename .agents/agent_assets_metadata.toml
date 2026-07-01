@@ -12,3 +12,9 @@ id = "34RLBqNO7d0fQymc-qmwx"
 uri = "file://DualVisionAI_v1.1.0_YOLO26.tar.gz"
 type = "unspecified"
 title = "DualVisionAI v1.1.0 — YOLO26 Edition (tar.gz)"
+
+[[outputs]]
+id = "pRKdes0GegNLzI7lArIBZ"
+uri = "file://DualVisionAI_v1.2.0_SingleCamera.tar.gz"
+type = "unspecified"
+title = "DualVisionAI v1.2.0 — Single Active Camera Mode"

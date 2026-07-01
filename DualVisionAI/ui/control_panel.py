@@ -1,6 +1,6 @@
 """
-Right control panel — System stats, Model info, Performance Dashboard,
-Detection stats, Detection log, Recording status.
+Right control panel — camera mode selector, system stats, model info,
+performance dashboard, detection stats, detection log, recording status.
 """
 import customtkinter as ctk
 import psutil
@@ -10,19 +10,54 @@ from datetime import datetime
 
 
 class ControlPanel(ctk.CTkFrame):
-    """Right panel: live metrics, model info, performance dashboard, detection log."""
+    """Right panel: camera selector, live metrics, model info, performance, log."""
 
-    def __init__(self, parent, **kwargs):
+    def __init__(self, parent, on_camera_switch=None, **kwargs):
         super().__init__(parent, fg_color="#0D1626",
                          corner_radius=10, border_width=1,
                          border_color="#1E3A5F", width=290, **kwargs)
         self.pack_propagate(False)
+        self._on_camera_switch = on_camera_switch   # callable(mode: str)
         self._build()
         self._monitor_thread = threading.Thread(target=self._system_monitor,
                                                 daemon=True, name="SysMonitor")
         self._monitor_thread.start()
 
     def _build(self):
+        # ── CAMERA MODE SELECTOR ─────────────────────────────────────────────
+        self._section("CAMERA MODE")
+        cam_frame = ctk.CTkFrame(self, fg_color="#0A0F1E", corner_radius=8)
+        cam_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+        self._cam_mode_var = ctk.StringVar(value="rgb")
+
+        row_rgb = ctk.CTkFrame(cam_frame, fg_color="transparent")
+        row_rgb.pack(fill="x", padx=8, pady=(6, 2))
+        self._rb_rgb = ctk.CTkRadioButton(
+            row_rgb, text="RGB Camera",
+            variable=self._cam_mode_var, value="rgb",
+            font=("Segoe UI", 11, "bold"), text_color="#3B82F6",
+            fg_color="#2563EB", hover_color="#1D4ED8",
+            border_color="#1E3A5F",
+            command=lambda: self._on_cam_select("rgb"))
+        self._rb_rgb.pack(side="left")
+
+        row_th = ctk.CTkFrame(cam_frame, fg_color="transparent")
+        row_th.pack(fill="x", padx=8, pady=(2, 6))
+        self._rb_thermal = ctk.CTkRadioButton(
+            row_th, text="Thermal Camera",
+            variable=self._cam_mode_var, value="thermal",
+            font=("Segoe UI", 11, "bold"), text_color="#F97316",
+            fg_color="#EA580C", hover_color="#C2410C",
+            border_color="#1E3A5F",
+            command=lambda: self._on_cam_select("thermal"))
+        self._rb_thermal.pack(side="left")
+
+        self._cam_status_label = ctk.CTkLabel(
+            cam_frame, text="Active: RGB Camera",
+            font=("Segoe UI", 9), text_color="#22C55E")
+        self._cam_status_label.pack(anchor="w", padx=10, pady=(0, 6))
+
         # ── SYSTEM ──────────────────────────────────────────────────────────
         self._section("SYSTEM")
         sys_frame = ctk.CTkFrame(self, fg_color="#0A0F1E", corner_radius=8)
@@ -40,50 +75,42 @@ class ControlPanel(ctk.CTkFrame):
         mdl_frame = ctk.CTkFrame(self, fg_color="#0A0F1E", corner_radius=8)
         mdl_frame.pack(fill="x", padx=10, pady=(0, 6))
 
-        self._model_var    = ctk.StringVar(value="Not loaded")
-        self._device_var   = ctk.StringVar(value="CPU")
-        self._classes_var  = ctk.StringVar(value="—")
-        self._inf_ms_var   = ctk.StringVar(value="0 ms")
-        self._onnx_var     = ctk.StringVar(value="—")
+        self._model_var   = ctk.StringVar(value="Not loaded")
+        self._device_var  = ctk.StringVar(value="CPU")
+        self._classes_var = ctk.StringVar(value="—")
+        self._inf_ms_var  = ctk.StringVar(value="0 ms")
+        self._onnx_var    = ctk.StringVar(value="—")
         self._stat_row(mdl_frame, "Model",     self._model_var,   "#CBD5E1")
         self._stat_row(mdl_frame, "Device",    self._device_var,  "#22C55E")
         self._stat_row(mdl_frame, "Classes",   self._classes_var, "#94A3B8")
         self._stat_row(mdl_frame, "Inference", self._inf_ms_var,  "#F59E0B")
         self._stat_row(mdl_frame, "ONNX",      self._onnx_var,    "#A78BFA")
 
-        # ── PERFORMANCE DASHBOARD ────────────────────────────────────────────
+        # ── PERFORMANCE ──────────────────────────────────────────────────────
         self._section("PERFORMANCE")
         perf_frame = ctk.CTkFrame(self, fg_color="#0A0F1E", corner_radius=8)
         perf_frame.pack(fill="x", padx=10, pady=(0, 6))
 
         self._fps_var     = ctk.StringVar(value="0.0")
         self._avg_fps_var = ctk.StringVar(value="0.0")
-        self._fps_rgb_var = ctk.StringVar(value="0.0")
-        self._fps_th_var  = ctk.StringVar(value="0.0")
         self._threads_var = ctk.StringVar(value="0")
         self._qsize_var   = ctk.StringVar(value="0")
         self._drops_var   = ctk.StringVar(value="0")
-        self._stat_row(perf_frame, "FPS (Inf)",     self._fps_var,     "#22C55E")
-        self._stat_row(perf_frame, "Avg FPS",       self._avg_fps_var, "#16A34A")
-        self._stat_row(perf_frame, "RGB FPS",       self._fps_rgb_var, "#3B82F6")
-        self._stat_row(perf_frame, "Thermal FPS",   self._fps_th_var,  "#F97316")
-        self._stat_row(perf_frame, "Threads",       self._threads_var, "#A78BFA")
-        self._stat_row(perf_frame, "Queue",         self._qsize_var,   "#64748B")
-        self._stat_row(perf_frame, "Frame Drops",   self._drops_var,   "#EF4444")
+        self._stat_row(perf_frame, "FPS (Inf)",   self._fps_var,     "#22C55E")
+        self._stat_row(perf_frame, "Avg FPS",     self._avg_fps_var, "#16A34A")
+        self._stat_row(perf_frame, "Threads",     self._threads_var, "#A78BFA")
+        self._stat_row(perf_frame, "Queue",       self._qsize_var,   "#64748B")
+        self._stat_row(perf_frame, "Frame Drops", self._drops_var,   "#EF4444")
 
         # ── DETECTION STATS ──────────────────────────────────────────────────
         self._section("DETECTION STATS")
         det_frame = ctk.CTkFrame(self, fg_color="#0A0F1E", corner_radius=8)
         det_frame.pack(fill="x", padx=10, pady=(0, 6))
 
-        self._rgb_det_var     = ctk.StringVar(value="0")
-        self._thermal_det_var = ctk.StringVar(value="0")
-        self._total_var       = ctk.StringVar(value="0")
+        self._active_det_var  = ctk.StringVar(value="0")
         self._session_var     = ctk.StringVar(value="0")
-        self._stat_row(det_frame, "RGB Dets",     self._rgb_det_var,     "#3B82F6")
-        self._stat_row(det_frame, "Thermal Dets", self._thermal_det_var, "#F97316")
-        self._stat_row(det_frame, "Current",      self._total_var,       "#E2E8F0")
-        self._stat_row(det_frame, "Session",      self._session_var,     "#64748B")
+        self._stat_row(det_frame, "Active Dets", self._active_det_var, "#3B82F6")
+        self._stat_row(det_frame, "Session",     self._session_var,    "#64748B")
 
         # ── DETECTION LOG ────────────────────────────────────────────────────
         self._section("DETECTION LOG")
@@ -116,6 +143,24 @@ class ControlPanel(ctk.CTkFrame):
                                       text_color="#334155", wraplength=250)
         self._rec_path.pack(anchor="w", padx=10)
 
+    # ── camera selector ───────────────────────────────────────────────────────
+    def _on_cam_select(self, mode: str):
+        label = "RGB Camera" if mode == "rgb" else "Thermal Camera"
+        self._cam_status_label.configure(text=f"Switching to {label} …",
+                                         text_color="#F59E0B")
+        if self._on_camera_switch:
+            self._on_camera_switch(mode)
+
+    def set_camera_mode_label(self, mode: str):
+        label = "RGB Camera" if mode == "rgb" else "Thermal Camera"
+        self._cam_status_label.configure(text=f"Active: {label}",
+                                         text_color="#22C55E")
+
+    def set_camera_buttons_enabled(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        self._rb_rgb.configure(state=state)
+        self._rb_thermal.configure(state=state)
+
     # ── section / row helpers ─────────────────────────────────────────────────
     def _section(self, text):
         f = ctk.CTkFrame(self, fg_color="transparent")
@@ -140,19 +185,18 @@ class ControlPanel(ctk.CTkFrame):
                      avg_fps: float = 0.0, fps_rgb: float = 0.0,
                      fps_thermal: float = 0.0, active_threads: int = 0,
                      queue_size: int = 0, frame_drops: int = 0,
-                     onnx_active: bool = False):
+                     onnx_active: bool = False, camera_mode: str = "rgb"):
         self._fps_var.set(f"{fps_inf:.1f}")
         self._avg_fps_var.set(f"{avg_fps:.1f}")
-        self._fps_rgb_var.set(f"{fps_rgb:.1f}")
-        self._fps_th_var.set(f"{fps_thermal:.1f}")
         self._threads_var.set(str(active_threads))
         self._qsize_var.set(str(queue_size))
         self._drops_var.set(str(frame_drops))
-        self._rgb_det_var.set(str(rgb_det))
-        self._thermal_det_var.set(str(thermal_det))
-        self._total_var.set(str(rgb_det + thermal_det))
+
+        active_det = rgb_det if camera_mode == "rgb" else thermal_det
+        self._active_det_var.set(str(active_det))
         self._session_var.set(str(session_total))
         self._inf_ms_var.set(f"{inf_ms:.0f} ms")
+
         if model_name:
             self._model_var.set(model_name)
         if device:

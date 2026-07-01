@@ -1,6 +1,12 @@
+"""
+DualVision AI Detector — Main Window
+Supports Single Active Camera Mode: only the selected stream runs at any time.
+The inactive stream is fully stopped (0 CPU, 0 RAM, 0 GPU).
+"""
 import customtkinter as ctk
 import threading
 import time
+import gc
 import cv2
 import logging
 from datetime import datetime
@@ -23,43 +29,35 @@ from ui.settings_dialog import SettingsDialog
 from ui.about_dialog import AboutDialog
 
 logger = logging.getLogger("DualVisionAI.mainwindow")
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
-# UI refresh rate — independent of inference speed
-UI_FPS = 30
+UI_FPS = 30   # UI refresh rate — independent of inference speed
 
 
 class MainWindow(ctk.CTk):
     def __init__(self, settings: Settings):
         super().__init__()
         self._settings = settings
-        self._detecting = False
-        self._paused = False
+        self._detecting   = False
+        self._paused      = False
+        self._camera_mode = "rgb"    # "rgb" | "thermal" — single active camera
+        self._switching   = False    # True while camera switch is in progress
+
         self._session_detection_count = 0
-        self._current_device = "CPU"
+        self._current_device     = "CPU"
         self._current_model_name = ""
 
-        # Last result held for continuous overlay — cleared only when YOLO
-        # returns empty (object left frame), NOT by a timer.
-        # draw_result holds the last non-empty inference result per stream.
-        # Set to None only when YOLO returns empty (object left frame).
-        # Never time-expired — this gives continuous overlay for all model sizes.
-        self._rgb_draw_result: DetectionResult | None = None
+        self._rgb_draw_result:     DetectionResult | None = None
         self._thermal_draw_result: DetectionResult | None = None
-
-        # Timestamps of the last inference we processed (to detect new arrivals)
-        self._rgb_last_inf_ts: float = 0.0
+        self._rgb_last_inf_ts:     float = 0.0
         self._thermal_last_inf_ts: float = 0.0
+        self._last_inf_ms:         float = 0.0
 
-        # Live inference latency shown in the control panel (updated per inference)
-        self._last_inf_ms: float = 0.0
-
-        # Buffered frames for display (latest only)
-        self._rgb_display_frame = None
+        # Display frame buffers — only the active camera is ever populated
+        self._rgb_display_frame     = None
         self._thermal_display_frame = None
         self._frame_lock = threading.Lock()
 
-        # Pending log entries accumulated between UI ticks
         self._pending_log: list[tuple] = []
         self._log_lock = threading.Lock()
 
@@ -69,14 +67,14 @@ class MainWindow(ctk.CTk):
         self._init_services()
         self._build_window()
         self._build_ui()
-        self._start_streams()
+        self._start_streams()        # starts only the active (RGB) stream
         self._start_worker_thread()
         self._start_ui_tick()
         self._setup_shortcuts()
 
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
     # Init
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
     def _init_services(self):
         s = self._settings
         self._rgb_stream = RTSPStream(
@@ -98,10 +96,8 @@ class MainWindow(ctk.CTk):
 
         self._model_manager = ModelManager(model_dir="models")
         self._detector: Detector | None = None
-        # max_age=0 → track is REMOVED immediately if not matched in next
-        # inference cycle. This is the key fix for ghost bounding boxes:
-        # the moment YOLO stops seeing an object, its box disappears.
-        self._rgb_tracker = ByteTracker(max_age=0, iou_threshold=0.35)
+
+        self._rgb_tracker     = ByteTracker(max_age=0, iou_threshold=0.35)
         self._thermal_tracker = ByteTracker(max_age=0, iou_threshold=0.35)
 
         self._screenshot_util = ScreenshotUtil(
@@ -114,17 +110,17 @@ class MainWindow(ctk.CTk):
             max_entries=s.get("logging", "max_log_entries", 100000))
 
         self._worker_running = False
-        self._ui_running = False
+        self._ui_running     = False
 
     def _build_window(self):
         s = self._settings
         self.title(f"DualVision AI Detector v{VERSION}")
-        w = s.get("ui", "window_width", 1600)
-        h = s.get("ui", "window_height", 950)
-        x = s.get("ui", "window_x", 100)
-        y = s.get("ui", "window_y", 100)
+        w = s.get("ui", "window_width",  1280)
+        h = s.get("ui", "window_height",  900)
+        x = s.get("ui", "window_x",       100)
+        y = s.get("ui", "window_y",       100)
         self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(1100, 700)
+        self.minsize(900, 600)
         if s.get("ui", "maximized", False):
             self.state("zoomed")
         self.configure(fg_color="#050A14")
@@ -132,18 +128,14 @@ class MainWindow(ctk.CTk):
         self._set_window_icon()
 
     def _set_window_icon(self):
-        """Set the taskbar / title-bar icon. Auto-generates if missing."""
         try:
             from pathlib import Path
             assets = Path(__file__).parent.parent / "assets"
             ico = assets / "icon.ico"
             png = assets / "logo.png"
-
-            # Generate on first run
             if not ico.exists() or not png.exists():
                 from assets.make_icon import generate
                 generate(assets)
-
             if ico.exists():
                 self.iconbitmap(str(ico))
             elif png.exists():
@@ -151,57 +143,177 @@ class MainWindow(ctk.CTk):
                 img = Image.open(str(png)).resize((64, 64))
                 photo = ImageTk.PhotoImage(img)
                 self.iconphoto(True, photo)
-                self._icon_ref = photo          # prevent GC
+                self._icon_ref = photo
         except Exception as e:
-            logger.debug(f"Icon not set: {e}")  # non-fatal
+            logger.debug(f"Icon not set: {e}")
 
     def _build_ui(self):
         callbacks = {
-            "start": self._on_start,
-            "stop": self._on_stop,
-            "pause": self._on_pause,
-            "resume": self._on_resume,
-            "screenshot": self._on_screenshot,
+            "start":        self._on_start,
+            "stop":         self._on_stop,
+            "pause":        self._on_pause,
+            "resume":       self._on_resume,
+            "screenshot":   self._on_screenshot,
             "record_start": self._on_record_start,
-            "record_stop": self._on_record_stop,
-            "settings": self._on_settings,
-            "export_csv": self._on_export_csv,
-            "export_json": self._on_export_json,
-            "about": self._on_about,
-            "exit": self._on_exit,
+            "record_stop":  self._on_record_stop,
+            "settings":     self._on_settings,
+            "export_csv":   self._on_export_csv,
+            "export_json":  self._on_export_json,
+            "about":        self._on_about,
+            "exit":         self._on_exit,
         }
         self._toolbar = Toolbar(self, callbacks=callbacks)
         self._toolbar.pack(fill="x", side="top")
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=6, pady=4)
+        # Content area — holds camera panel(s) + control panel
+        self._content = ctk.CTkFrame(self, fg_color="transparent")
+        self._content.pack(fill="both", expand=True, padx=6, pady=4)
 
-        self._rgb_panel = CameraPanel(content, title="RGB Camera")
-        self._rgb_panel.pack(side="left", fill="both", expand=True, padx=(0, 3))
+        self._rgb_panel     = CameraPanel(self._content, title="RGB Camera")
+        self._thermal_panel = CameraPanel(self._content, title="Thermal Camera")
 
-        self._thermal_panel = CameraPanel(content, title="Thermal Camera")
-        self._thermal_panel.pack(side="left", fill="both", expand=True, padx=(3, 3))
+        # Control panel with camera-switch callback
+        self._control_panel = ControlPanel(
+            self._content,
+            on_camera_switch=self._on_camera_switch_requested)
+        self._control_panel.pack(side="right", fill="y", padx=(3, 0))
 
-        self._control_panel = ControlPanel(content)
-        self._control_panel.pack(side="left", fill="y", padx=(3, 0))
+        # Apply initial layout (RGB active, Thermal hidden)
+        self._apply_camera_layout("rgb", animate=False)
 
         self._statusbar = StatusBar(self)
         self._statusbar.pack(fill="x", side="bottom")
 
+    # ── camera layout ─────────────────────────────────────────────────────────
+    def _apply_camera_layout(self, mode: str, animate: bool = True):
+        """Show only the active camera panel, filling the full content area."""
+        if mode == "rgb":
+            self._thermal_panel.pack_forget()
+            self._rgb_panel.pack(side="left", fill="both", expand=True,
+                                 padx=(0, 3))
+        else:
+            self._rgb_panel.pack_forget()
+            self._thermal_panel.pack(side="left", fill="both", expand=True,
+                                     padx=(0, 3))
+
+    # ── camera switch ─────────────────────────────────────────────────────────
+    def _on_camera_switch_requested(self, mode: str):
+        """Called from the control panel radio button (Tkinter thread)."""
+        if mode == self._camera_mode or self._switching:
+            return
+        # Disable radio buttons while switching
+        self._control_panel.set_camera_buttons_enabled(False)
+        self._switching = True
+        threading.Thread(target=self._do_camera_switch,
+                         args=(mode,), daemon=True,
+                         name="CamSwitch").start()
+
+    def _do_camera_switch(self, new_mode: str):
+        """
+        Fully stop the inactive stream and start the new one.
+        Runs in a background thread to avoid blocking UI.
+        """
+        old_mode = self._camera_mode
+        logger.info(f"Camera switch: {old_mode} → {new_mode}")
+
+        # ── 1. Pause detection during switch ──────────────────────────────────
+        was_detecting = self._detecting
+        if was_detecting and self._detector:
+            self._detector.pause()
+
+        # ── 2. Stop recorder on old stream ───────────────────────────────────
+        self._recorder.stop_all()
+        self.after(0, self._control_panel.set_recording_status, False, "")
+
+        # ── 3. Stop the OLD stream completely ────────────────────────────────
+        if old_mode == "rgb":
+            self._rgb_stream.stop()
+            # Clear RGB state
+            with self._frame_lock:
+                self._rgb_display_frame = None
+            self._rgb_draw_result    = None
+            self._rgb_last_inf_ts    = 0.0
+            self._rgb_tracker.reset()
+            if self._detector:
+                try:
+                    # Drain the RGB queue in the detector so no stale frames
+                    while not self._detector._rgb_q.empty():
+                        try: self._detector._rgb_q.get_nowait()
+                        except Exception: break
+                except Exception:
+                    pass
+        else:
+            self._thermal_stream.stop()
+            with self._frame_lock:
+                self._thermal_display_frame = None
+            self._thermal_draw_result    = None
+            self._thermal_last_inf_ts    = 0.0
+            self._thermal_tracker.reset()
+            if self._detector:
+                try:
+                    while not self._detector._thermal_q.empty():
+                        try: self._detector._thermal_q.get_nowait()
+                        except Exception: break
+                except Exception:
+                    pass
+
+        # ── 4. Force garbage collection ───────────────────────────────────────
+        gc.collect()
+
+        # ── 5. Apply new mode ─────────────────────────────────────────────────
+        self._camera_mode = new_mode
+        self._last_inf_ms = 0.0
+
+        # ── 6. Update UI layout on Tkinter thread ─────────────────────────────
+        self.after(0, self._apply_camera_layout, new_mode)
+        self.after(0, self._control_panel.set_camera_mode_label, new_mode)
+
+        # ── 7. Start the NEW stream ───────────────────────────────────────────
+        if new_mode == "rgb":
+            self._rgb_stream = RTSPStream(
+                name="RGB",
+                url=self._settings.get("rtsp", "rgb_url"),
+                buffer_size=2,
+                reconnect_delay=self._settings.get("rtsp", "reconnect_delay", 3),
+                timeout=self._settings.get("rtsp", "timeout", 10)
+            )
+            self._rgb_stream.set_status_callback(self._on_stream_status)
+            self._rgb_stream.start()
+        else:
+            self._thermal_stream = RTSPStream(
+                name="Thermal",
+                url=self._settings.get("rtsp", "thermal_url"),
+                buffer_size=2,
+                reconnect_delay=self._settings.get("rtsp", "reconnect_delay", 3),
+                timeout=self._settings.get("rtsp", "timeout", 10)
+            )
+            self._thermal_stream.set_status_callback(self._on_stream_status)
+            self._thermal_stream.start()
+
+        # ── 8. Resume detection on new stream ────────────────────────────────
+        if was_detecting and self._detector:
+            self._detector.clear_results()
+            self._detector.resume()
+
+        # ── 9. Re-enable radio buttons ────────────────────────────────────────
+        self._switching = False
+        self.after(0, self._control_panel.set_camera_buttons_enabled, True)
+        logger.info(f"Camera switch complete → {new_mode}")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Streams
+    # ──────────────────────────────────────────────────────────────────────────
     def _start_streams(self):
-        self._rgb_stream.start()
-        self._thermal_stream.start()
+        """Start only the currently active stream. The other stays dormant."""
+        if self._camera_mode == "rgb":
+            self._rgb_stream.start()
+        else:
+            self._thermal_stream.start()
 
-    def _setup_shortcuts(self):
-        self.bind("<space>", lambda e: self._on_pause() if self._detecting else None)
-        self.bind("<Control-s>", lambda e: self._on_screenshot())
-        self.bind("<Control-r>", lambda e: self._on_record_start())
-        self.bind("<Escape>", lambda e: self._on_exit())
-
-    # ------------------------------------------------------------------
-    # Worker thread — reads frames, applies tracking, prepares display data
-    # Runs at camera FPS; completely decoupled from Tkinter
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
+    # Worker thread — reads frames, runs tracking, prepares display data
+    # Only processes the active camera stream.
+    # ──────────────────────────────────────────────────────────────────────────
     def _start_worker_thread(self):
         self._worker_running = True
         threading.Thread(target=self._worker_loop,
@@ -214,153 +326,146 @@ class MainWindow(ctk.CTk):
                 self._process_one_frame()
             except Exception as e:
                 logger.error(f"Worker error: {e}")
-            # Run at up to 60 Hz; don't busy-spin
             elapsed = time.perf_counter() - t0
-            sleep = max(0.001, 1 / 60 - elapsed)
-            time.sleep(sleep)
+            time.sleep(max(0.001, 1 / 60 - elapsed))
 
     def _process_one_frame(self):
-        rgb_frame    = self._rgb_stream.read()
-        thermal_frame = self._thermal_stream.read()
-
-        if not self._detecting or self._paused or self._detector is None:
-            with self._frame_lock:
-                if rgb_frame    is not None: self._rgb_display_frame     = rgb_frame
-                if thermal_frame is not None: self._thermal_display_frame = thermal_frame
+        # During a camera switch, skip processing to avoid races
+        if self._switching:
+            time.sleep(0.02)
             return
 
-        # Push live frames to inference thread (it runs independently)
-        if rgb_frame    is not None: self._detector.push_rgb(rgb_frame)
-        if thermal_frame is not None: self._detector.push_thermal(thermal_frame)
+        mode = self._camera_mode
+
+        # Read ONLY from the active stream
+        if mode == "rgb":
+            frame = self._rgb_stream.read()
+        else:
+            frame = self._thermal_stream.read()
+
+        # No detection running — just buffer the raw frame for display
+        if not self._detecting or self._paused or self._detector is None:
+            with self._frame_lock:
+                if frame is not None:
+                    if mode == "rgb":
+                        self._rgb_display_frame = frame
+                    else:
+                        self._thermal_display_frame = frame
+            return
+
+        # Push to the correct inference queue only
+        if frame is not None:
+            if mode == "rgb":
+                self._detector.push_rgb(frame)
+            else:
+                self._detector.push_thermal(frame)
 
         enable_tracking = self._settings.get("detection", "enable_tracking", True)
 
-        # ── RGB ──────────────────────────────────────────────────────────────
-        rgb_result = self._detector.get_rgb_result()
+        if mode == "rgb":
+            self._process_rgb_result(frame, enable_tracking)
+            display = draw_detections(frame, self._rgb_draw_result) if frame is not None else None
+            if display is not None and self._recorder.is_recording("RGB"):
+                self._recorder.write("RGB", display)
+            with self._frame_lock:
+                if display is not None:
+                    self._rgb_display_frame = display
+        else:
+            self._process_thermal_result(frame, enable_tracking)
+            display = draw_detections(frame, self._thermal_draw_result) if frame is not None else None
+            if display is not None and self._recorder.is_recording("Thermal"):
+                self._recorder.write("Thermal", display)
+            with self._frame_lock:
+                if display is not None:
+                    self._thermal_display_frame = display
 
-        # Only act when a NEW inference result has arrived (timestamp changed).
-        # This means we log & update draw_result exactly ONCE per inference,
-        # regardless of how long inference takes (works for all model sizes).
-        if rgb_result is not None and rgb_result.timestamp != self._rgb_last_inf_ts:
-            self._rgb_last_inf_ts = rgb_result.timestamp
-            self._last_inf_ms     = rgb_result.inference_ms
+    def _process_rgb_result(self, frame, enable_tracking: bool):
+        result = self._detector.get_rgb_result()
+        if result is None or result.timestamp == self._rgb_last_inf_ts:
+            return
+        self._rgb_last_inf_ts = result.timestamp
+        self._last_inf_ms     = result.inference_ms
 
-            if rgb_result.is_empty():
-                # Object left frame → clear boxes immediately
-                self._rgb_draw_result = None
-                if enable_tracking:
-                    self._rgb_tracker.reset()
-            else:
-                # Apply tracker to lock in stable IDs
-                if enable_tracking:
-                    dets = [{"box": b, "class_id": c, "confidence": cf}
-                            for b, c, cf in zip(rgb_result.boxes,
-                                                rgb_result.class_ids,
-                                                rgb_result.confidences)]
-                    tracked = self._rgb_tracker.update(dets)
-                    rgb_result.boxes       = [t["box"]        for t in tracked]
-                    rgb_result.class_ids   = [t["class_id"]   for t in tracked]
-                    rgb_result.confidences = [t["confidence"]  for t in tracked]
-                    rgb_result.class_names = [
-                        (self._detector.class_names[t["class_id"]]
-                         if t["class_id"] < len(self._detector.class_names) else "?")
-                        for t in tracked]
-                    rgb_result.track_ids = [t["track_id"] for t in tracked]
+        if result.is_empty():
+            self._rgb_draw_result = None
+            if enable_tracking:
+                self._rgb_tracker.reset()
+            return
 
-                # Store for continuous overlay across display frames
-                self._rgb_draw_result = rgb_result
-                self._session_detection_count += len(rgb_result.boxes)
+        if enable_tracking:
+            dets = [{"box": b, "class_id": c, "confidence": cf}
+                    for b, c, cf in zip(result.boxes, result.class_ids,
+                                        result.confidences)]
+            tracked = self._rgb_tracker.update(dets)
+            result.boxes       = [t["box"]       for t in tracked]
+            result.class_ids   = [t["class_id"]  for t in tracked]
+            result.confidences = [t["confidence"] for t in tracked]
+            result.class_names = [
+                (self._detector.class_names[t["class_id"]]
+                 if t["class_id"] < len(self._detector.class_names) else "?")
+                for t in tracked]
+            result.track_ids = [t["track_id"] for t in tracked]
 
-                # Log ONCE per inference — never on redisplay frames
-                for i in range(len(rgb_result.boxes)):
-                    name = (rgb_result.class_names[i]
-                            if i < len(rgb_result.class_names) else "")
-                    conf = (rgb_result.confidences[i]
-                            if i < len(rgb_result.confidences) else 0.0)
-                    tid  = (rgb_result.track_ids[i]
-                            if i < len(rgb_result.track_ids)  else 0)
-                    box  = (rgb_result.boxes[i]
-                            if i < len(rgb_result.boxes)       else [0,0,0,0])
-                    self._det_log.log("RGB", name, conf, tid, box)
-                    with self._log_lock:
-                        self._pending_log.append(("RGB", name, conf, tid))
+        self._rgb_draw_result = result
+        self._session_detection_count += len(result.boxes)
+        for i in range(len(result.boxes)):
+            name = result.class_names[i]  if i < len(result.class_names)  else ""
+            conf = result.confidences[i]  if i < len(result.confidences)  else 0.0
+            tid  = result.track_ids[i]    if i < len(result.track_ids)    else 0
+            box  = result.boxes[i]        if i < len(result.boxes)        else [0,0,0,0]
+            self._det_log.log("RGB", name, conf, tid, box)
+            with self._log_lock:
+                self._pending_log.append(("RGB", name, conf, tid))
 
-        # Draw: overlay last valid result on the CURRENT live frame.
-        # Boxes persist between slow inferences → no flickering with M/L/X.
-        rgb_display = (draw_detections(rgb_frame, self._rgb_draw_result)
-                       if rgb_frame is not None else None)
+    def _process_thermal_result(self, frame, enable_tracking: bool):
+        result = self._detector.get_thermal_result()
+        if result is None or result.timestamp == self._thermal_last_inf_ts:
+            return
+        self._thermal_last_inf_ts = result.timestamp
+        self._last_inf_ms         = result.inference_ms
 
-        # ── Thermal ──────────────────────────────────────────────────────────
-        thermal_result = self._detector.get_thermal_result()
+        if result.is_empty():
+            self._thermal_draw_result = None
+            if enable_tracking:
+                self._thermal_tracker.reset()
+            return
 
-        if (thermal_result is not None
-                and thermal_result.timestamp != self._thermal_last_inf_ts):
-            self._thermal_last_inf_ts = thermal_result.timestamp
-            if self._last_inf_ms == 0:
-                self._last_inf_ms = thermal_result.inference_ms
+        if enable_tracking:
+            dets = [{"box": b, "class_id": c, "confidence": cf}
+                    for b, c, cf in zip(result.boxes, result.class_ids,
+                                        result.confidences)]
+            tracked = self._thermal_tracker.update(dets)
+            result.boxes       = [t["box"]       for t in tracked]
+            result.class_ids   = [t["class_id"]  for t in tracked]
+            result.confidences = [t["confidence"] for t in tracked]
+            result.class_names = [
+                (self._detector.class_names[t["class_id"]]
+                 if t["class_id"] < len(self._detector.class_names) else "?")
+                for t in tracked]
+            result.track_ids = [t["track_id"] for t in tracked]
 
-            if thermal_result.is_empty():
-                self._thermal_draw_result = None
-                if enable_tracking:
-                    self._thermal_tracker.reset()
-            else:
-                if enable_tracking:
-                    dets = [{"box": b, "class_id": c, "confidence": cf}
-                            for b, c, cf in zip(thermal_result.boxes,
-                                                thermal_result.class_ids,
-                                                thermal_result.confidences)]
-                    tracked = self._thermal_tracker.update(dets)
-                    thermal_result.boxes       = [t["box"]       for t in tracked]
-                    thermal_result.class_ids   = [t["class_id"]  for t in tracked]
-                    thermal_result.confidences = [t["confidence"] for t in tracked]
-                    thermal_result.class_names = [
-                        (self._detector.class_names[t["class_id"]]
-                         if t["class_id"] < len(self._detector.class_names) else "?")
-                        for t in tracked]
-                    thermal_result.track_ids = [t["track_id"] for t in tracked]
+        self._thermal_draw_result = result
+        self._session_detection_count += len(result.boxes)
+        for i in range(len(result.boxes)):
+            name = result.class_names[i]  if i < len(result.class_names)  else ""
+            conf = result.confidences[i]  if i < len(result.confidences)  else 0.0
+            tid  = result.track_ids[i]    if i < len(result.track_ids)    else 0
+            box  = result.boxes[i]        if i < len(result.boxes)        else [0,0,0,0]
+            self._det_log.log("Thermal", name, conf, tid, box)
+            with self._log_lock:
+                self._pending_log.append(("Thermal", name, conf, tid))
 
-                self._thermal_draw_result = thermal_result
-                self._session_detection_count += len(thermal_result.boxes)
-
-                for i in range(len(thermal_result.boxes)):
-                    name = (thermal_result.class_names[i]
-                            if i < len(thermal_result.class_names) else "")
-                    conf = (thermal_result.confidences[i]
-                            if i < len(thermal_result.confidences) else 0.0)
-                    tid  = (thermal_result.track_ids[i]
-                            if i < len(thermal_result.track_ids)  else 0)
-                    box  = (thermal_result.boxes[i]
-                            if i < len(thermal_result.boxes)       else [0,0,0,0])
-                    self._det_log.log("Thermal", name, conf, tid, box)
-                    with self._log_lock:
-                        self._pending_log.append(("Thermal", name, conf, tid))
-
-        thermal_display = (draw_detections(thermal_frame, self._thermal_draw_result)
-                           if thermal_frame is not None else None)
-
-        # Write to recorder
-        if rgb_display     is not None and self._recorder.is_recording("RGB"):
-            self._recorder.write("RGB",     rgb_display)
-        if thermal_display is not None and self._recorder.is_recording("Thermal"):
-            self._recorder.write("Thermal", thermal_display)
-
-        # Swap in display frames atomically
-        with self._frame_lock:
-            if rgb_display     is not None: self._rgb_display_frame     = rgb_display
-            if thermal_display is not None: self._thermal_display_frame = thermal_display
-
-    # ------------------------------------------------------------------
-    # UI tick — runs on Tkinter's main thread via after()
-    # Single scheduled call per tick; updates all panels at once
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
+    # UI tick — Tkinter main thread via after()
+    # Only updates the active camera panel.
+    # ──────────────────────────────────────────────────────────────────────────
     def _start_ui_tick(self):
         self._ui_running = True
         self._schedule_tick()
 
     def _schedule_tick(self):
         if self._ui_running:
-            interval_ms = max(1, int(1000 / UI_FPS))
-            self.after(interval_ms, self._ui_tick)
+            self.after(max(1, int(1000 / UI_FPS)), self._ui_tick)
 
     def _ui_tick(self):
         try:
@@ -371,74 +476,84 @@ class MainWindow(ctk.CTk):
             self._schedule_tick()
 
     def _do_ui_tick(self):
+        mode = self._camera_mode
+        det  = self._detector
+
         with self._frame_lock:
-            rgb_frame = self._rgb_display_frame
+            rgb_frame     = self._rgb_display_frame
             thermal_frame = self._thermal_display_frame
 
-        det = self._detector
         fps_inf = det.fps_inference if det else 0.0
-        inf_ms = self._last_inf_ms
+        inf_ms  = self._last_inf_ms
+
         rgb_det_count     = len(self._rgb_draw_result.boxes)     if self._rgb_draw_result     else 0
         thermal_det_count = len(self._thermal_draw_result.boxes) if self._thermal_draw_result else 0
 
-        # Camera panels
-        fps_rgb = self._rgb_stream.fps_actual
-        fps_th = self._thermal_stream.fps_actual
-        if rgb_frame is not None:
-            self._rgb_panel.update_frame(rgb_frame, fps_rgb, rgb_det_count, inf_ms)
-        if thermal_frame is not None:
-            self._thermal_panel.update_frame(thermal_frame, fps_th, thermal_det_count, inf_ms)
+        # Update only the visible (active) camera panel
+        if mode == "rgb" and rgb_frame is not None:
+            fps_display = self._rgb_stream.fps_actual
+            self._rgb_panel.update_frame(rgb_frame, fps_display, rgb_det_count, inf_ms)
+        elif mode == "thermal" and thermal_frame is not None:
+            fps_display = self._thermal_stream.fps_actual
+            self._thermal_panel.update_frame(thermal_frame, fps_display,
+                                             thermal_det_count, inf_ms)
 
-        # Control panel stats (one call) — includes full performance dashboard data
+        # Control panel metrics
         model_name = self._current_model_name
-        device = self._current_device
-        cls_count = len(det.class_names) if det else 0
+        device     = self._current_device
+        cls_count  = len(det.class_names) if det else 0
         self._control_panel.update_stats(
             fps_inf, rgb_det_count, thermal_det_count,
             inf_ms, self._session_detection_count,
             model_name, device, cls_count,
-            avg_fps       = det.avg_fps          if det else 0.0,
-            fps_rgb       = det.fps_rgb          if det else 0.0,
-            fps_thermal   = det.fps_thermal      if det else 0.0,
-            active_threads= det.active_threads   if det else 0,
-            queue_size    = det.queue_size       if det else 0,
-            frame_drops   = det.frame_drops      if det else 0,
-            onnx_active   = det.onnx_active      if det else False,
+            avg_fps        = det.avg_fps        if det else 0.0,
+            fps_rgb        = det.fps_rgb        if det else 0.0,
+            fps_thermal    = det.fps_thermal    if det else 0.0,
+            active_threads = det.active_threads if det else 0,
+            queue_size     = det.queue_size     if det else 0,
+            frame_drops    = det.frame_drops    if det else 0,
+            onnx_active    = det.onnx_active    if det else False,
+            camera_mode    = mode,
         )
 
-        # Flush pending detection log entries (batched — at most once per tick)
+        # Flush pending log entries
         with self._log_lock:
-            log_batch = self._pending_log[:20]  # max 20 entries per tick
+            log_batch = self._pending_log[:20]
             self._pending_log = self._pending_log[20:]
         for camera, name, conf, tid in log_batch:
             self._control_panel.log_detection(camera, name, conf, tid)
 
-        # Status bar (one call)
-        rgb_status = self._rgb_stream.status.value
-        thermal_status = self._thermal_stream.status.value
-        now = datetime.now().strftime("%H:%M:%S")
-        self._statusbar.update(
-            fps=fps_inf,
-            model=model_name,
-            device=device,
-            detecting=self._detecting,
-            rgb_status=rgb_status,
-            thermal_status=thermal_status,
-            timestamp=now)
+        # Status bar — show only the active stream status
+        if mode == "rgb":
+            active_status = self._rgb_stream.status.value
+            self._statusbar.update(
+                fps=fps_inf, model=model_name, device=device,
+                detecting=self._detecting,
+                rgb_status=active_status,
+                thermal_status="Inactive",
+                timestamp=datetime.now().strftime("%H:%M:%S"))
+        else:
+            active_status = self._thermal_stream.status.value
+            self._statusbar.update(
+                fps=fps_inf, model=model_name, device=device,
+                detecting=self._detecting,
+                rgb_status="Inactive",
+                thermal_status=active_status,
+                timestamp=datetime.now().strftime("%H:%M:%S"))
 
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
     # Actions
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────────────
     def _on_start(self):
         if self._detecting:
             return
         s = self._settings
         model_name = s.get("inference", "model_name", "yolo26n.pt")
-        use_gpu = s.get("inference", "use_gpu", True)
-        conf = s.get("detection", "confidence", 0.45)
-        iou_val = s.get("detection", "iou", 0.45)
+        use_gpu    = s.get("inference", "use_gpu",   False)
+        conf       = s.get("detection", "confidence", 0.45)
+        iou_val    = s.get("detection", "iou",        0.45)
         input_size = s.get("detection", "input_width", 640)
-        frame_skip = s.get("detection", "frame_skip", 1)
+        frame_skip = s.get("detection", "frame_skip",   1)
         self._current_model_name = model_name
 
         def _load_and_start():
@@ -447,17 +562,14 @@ class MainWindow(ctk.CTk):
                 self.after(0, messagebox.showinfo,
                            "Downloading Model",
                            f"Model '{model_name}' not found locally.\n\n"
-                           "Ultralytics will auto-download it (~5 MB).\n"
+                           "Ultralytics will auto-download it (~6 MB).\n"
                            "Internet required only this once.\n\n"
-                           "Click OK and wait — the app will start detecting shortly.")
+                           "Click OK and wait — detection will start shortly.")
 
             detector = Detector(
                 model_path=str(model_path),
-                conf=conf,
-                iou=iou_val,
-                use_gpu=use_gpu,
-                input_size=input_size,
-                frame_skip=frame_skip
+                conf=conf, iou=iou_val, use_gpu=use_gpu,
+                input_size=input_size, frame_skip=frame_skip
             )
 
             if not detector.load():
@@ -477,7 +589,7 @@ class MainWindow(ctk.CTk):
                 except Exception:
                     pass
 
-            self._detector = detector
+            self._detector    = detector
             self._rgb_tracker.reset()
             self._thermal_tracker.reset()
             self._rgb_draw_result     = None
@@ -487,15 +599,17 @@ class MainWindow(ctk.CTk):
             self._last_inf_ms         = 0.0
             self._session_detection_count = 0
             self._detecting = True
-            self._paused = False
+            self._paused    = False
             self._detector.start()
-            logger.info(f"Detection started — model={model_name} device={self._current_device}")
+            logger.info(f"Detection started — model={model_name} "
+                        f"camera={self._camera_mode} device={self._current_device}")
 
-        threading.Thread(target=_load_and_start, daemon=True, name="ModelLoader").start()
+        threading.Thread(target=_load_and_start, daemon=True,
+                         name="ModelLoader").start()
 
     def _on_stop(self):
         self._detecting = False
-        self._paused = False
+        self._paused    = False
         if self._detector:
             self._detector.stop()
             self._detector.clear_results()
@@ -516,48 +630,56 @@ class MainWindow(ctk.CTk):
             if self._detector:
                 self._detector.pause()
                 self._detector.clear_results()
-            self._rgb_stream.pause()
-            self._thermal_stream.pause()
+            # Only pause the active stream
+            if self._camera_mode == "rgb":
+                self._rgb_stream.pause()
+            else:
+                self._thermal_stream.pause()
 
     def _on_resume(self):
         if self._detecting and self._paused:
             self._paused = False
             if self._detector:
                 self._detector.resume()
-            self._rgb_stream.resume()
-            self._thermal_stream.resume()
+            if self._camera_mode == "rgb":
+                self._rgb_stream.resume()
+            else:
+                self._thermal_stream.resume()
 
     def _on_screenshot(self):
         with self._frame_lock:
-            rgb = self._rgb_display_frame
-            thermal = self._thermal_display_frame
-        paths = self._screenshot_util.save_both(
-            rgb.copy() if rgb is not None else None,
-            thermal.copy() if thermal is not None else None)
+            rgb_f    = self._rgb_display_frame
+            therm_f  = self._thermal_display_frame
+        # Save only the active camera frame
+        if self._camera_mode == "rgb":
+            active_frame = rgb_f.copy() if rgb_f is not None else None
+            paths = self._screenshot_util.save_both(active_frame, None)
+        else:
+            active_frame = therm_f.copy() if therm_f is not None else None
+            paths = self._screenshot_util.save_both(None, active_frame)
         if paths:
             messagebox.showinfo("Screenshot Saved", "Saved:\n" + "\n".join(paths))
         else:
-            messagebox.showwarning("Screenshot", "No frames available yet.")
+            messagebox.showwarning("Screenshot", "No frame available yet.")
 
     def _on_record_start(self):
         with self._frame_lock:
-            rgb = self._rgb_display_frame
-            thermal = self._thermal_display_frame
+            rgb_f   = self._rgb_display_frame
+            therm_f = self._thermal_display_frame
         started = []
-        if rgb is not None:
-            h, w = rgb.shape[:2]
+        # Record only the active stream
+        if self._camera_mode == "rgb" and rgb_f is not None:
+            h, w = rgb_f.shape[:2]
             p = self._recorder.start("RGB", w, h)
-            if p:
-                started.append(p)
-        if thermal is not None:
-            h, w = thermal.shape[:2]
+            if p: started.append(p)
+        elif self._camera_mode == "thermal" and therm_f is not None:
+            h, w = therm_f.shape[:2]
             p = self._recorder.start("Thermal", w, h)
-            if p:
-                started.append(p)
+            if p: started.append(p)
         if started:
             self._control_panel.set_recording_status(True, "\n".join(started))
         else:
-            messagebox.showwarning("Recording", "No frames available to record.")
+            messagebox.showwarning("Recording", "No frame available to record.")
 
     def _on_record_stop(self):
         self._recorder.stop_all()
@@ -568,10 +690,11 @@ class MainWindow(ctk.CTk):
             if self._detector:
                 self._detector.update_params(
                     conf=self._settings.get("detection", "confidence", 0.45),
-                    iou=self._settings.get("detection", "iou", 0.45),
+                    iou=self._settings.get("detection", "iou",         0.45),
                     frame_skip=self._settings.get("detection", "frame_skip", 1),
                     input_size=self._settings.get("detection", "input_width", 640))
-        SettingsDialog(self, self._settings, on_save=on_save, detector=self._detector)
+        SettingsDialog(self, self._settings,
+                       on_save=on_save, detector=self._detector)
 
     def _on_export_csv(self):
         path = filedialog.asksaveasfilename(
@@ -601,30 +724,38 @@ class MainWindow(ctk.CTk):
         AboutDialog(self)
 
     def _on_stream_status(self, name: str, status: StreamStatus):
-        connected = status == StreamStatus.CONNECTED
+        connected   = status == StreamStatus.CONNECTED
         status_text = status.value
-        if name == "RGB":
+        # Only update the panel that is currently active/visible
+        if name == "RGB" and self._camera_mode == "rgb":
             self.after(0, self._rgb_panel.set_status, connected, status_text)
-        elif name == "Thermal":
+        elif name == "Thermal" and self._camera_mode == "thermal":
             self.after(0, self._thermal_panel.set_status, connected, status_text)
+
+    def _setup_shortcuts(self):
+        self.bind("<space>",     lambda e: self._on_pause() if self._detecting else None)
+        self.bind("<Control-s>", lambda e: self._on_screenshot())
+        self.bind("<Control-r>", lambda e: self._on_record_start())
+        self.bind("<Escape>",    lambda e: self._on_exit())
 
     def _on_exit(self):
         if messagebox.askyesno("Exit", "Exit DualVision AI Detector?"):
-            self._ui_running = False
+            self._ui_running    = False
             self._worker_running = False
-            self._detecting = False
+            self._detecting     = False
             if self._detector:
-                try:
-                    self._detector.stop()
-                except Exception:
-                    pass
+                try: self._detector.stop()
+                except Exception: pass
             self._recorder.stop_all()
-            self._rgb_stream.stop()
-            self._thermal_stream.stop()
-            self._settings.set("ui", "window_width", self.winfo_width())
+            # Stop whichever stream is running
+            try: self._rgb_stream.stop()
+            except Exception: pass
+            try: self._thermal_stream.stop()
+            except Exception: pass
+            self._settings.set("ui", "window_width",  self.winfo_width())
             self._settings.set("ui", "window_height", self.winfo_height())
-            self._settings.set("ui", "window_x", self.winfo_x())
-            self._settings.set("ui", "window_y", self.winfo_y())
-            self._settings.set("ui", "maximized", self.state() == "zoomed")
+            self._settings.set("ui", "window_x",      self.winfo_x())
+            self._settings.set("ui", "window_y",      self.winfo_y())
+            self._settings.set("ui", "maximized",     self.state() == "zoomed")
             self._settings.save()
             self.destroy()

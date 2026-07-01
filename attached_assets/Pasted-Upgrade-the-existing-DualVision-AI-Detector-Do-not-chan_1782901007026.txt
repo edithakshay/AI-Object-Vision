@@ -1,0 +1,78 @@
+Upgrade the existing DualVision AI Detector.
+Do not change the UI design.
+Implement Single Active Camera Mode.
+Camera Selection
+Create a camera selector:
+RGB Camera
+Thermal Camera
+Only one camera can be active at a time.
+RGB Mode
+When RGB Camera is selected:
+Connect only to RGB RTSP.
+Disconnect the Thermal RTSP completely.
+Stop the Thermal capture thread.
+Stop the Thermal decoder.
+Stop the Thermal rendering thread.
+Free all Thermal buffers.
+Release the Thermal VideoCapture.
+Stop all background processing related to Thermal.
+Apply YOLO26 detection only on RGB.
+Display only the RGB video panel.
+Hide or collapse the Thermal panel.
+Thermal must consume 0 CPU, 0 GPU, and 0 RAM after being disabled.
+Thermal Mode
+When Thermal Camera is selected:
+Disconnect the RGB RTSP completely.
+Stop the RGB capture thread.
+Stop the RGB decoder.
+Stop the RGB rendering thread.
+Release RGB VideoCapture.
+Free all RGB memory.
+Stop RGB background processing.
+Apply YOLO26 detection only on the Thermal stream.
+Display only the Thermal video panel.
+Hide or collapse the RGB panel.
+RGB must consume 0 CPU, 0 GPU, and 0 RAM after being disabled.
+Instant Switching
+Switching cameras must:
+Stop the current stream cleanly.
+Release all resources.
+Start the selected stream.
+Reconnect automatically.
+No application restart.
+No memory leaks.
+No frozen frames.
+Resource Optimization
+When one camera is disabled:
+No decoding
+No rendering
+No inference
+No reconnect thread
+No hidden processing
+The inactive camera must not run in the background.
+UI
+Add a selector:
+Camera Mode
+
+(•) RGB
+
+( ) Thermal
+Only one option can be selected.
+Automatically resize the active video to occupy the available display area.
+AI Processing
+YOLO26 should run only on the active camera.
+Never perform inference on an inactive stream.
+Memory Optimization
+After switching cameras:
+Release all NumPy arrays.
+Clear frame queues.
+Stop worker threads.
+Release OpenCV buffers.
+Call garbage collection where appropriate.
+Performance Goal
+This optimization should reduce:
+CPU usage
+RAM usage
+GPU usage
+Latency
+while increasing FPS.
