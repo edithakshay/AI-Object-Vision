@@ -1,0 +1,224 @@
+You are working on my existing project:
+DualVision AI Detector
+This is NOT a new project.
+Modify the existing code only.
+Do not redesign the UI.
+Do not change the project architecture.
+The goal is to create a stable production-ready CPU version using ONNX Runtime CPU only.
+This version will become the foundation for all future development.
+GPU support will be implemented later.
+IMPORTANT
+Ignore:
+CUDA
+TensorRT
+GPU
+RTX
+Torch CUDA
+Do not attempt to detect GPU.
+Remove every unfinished GPU implementation.
+Remove experimental GPU code.
+Remove temporary GPU fixes.
+The application must use
+ONNX Runtime CPUExecutionProvider
+only.
+Backend
+Use
+YOLO26n
+↓
+Export to
+YOLO26n.onnx
+↓
+ONNX Runtime
+↓
+CPUExecutionProvider
+No PyTorch inference.
+PyTorch should only be used one time if ONNX export is required.
+After export,
+perform every inference using ONNX Runtime CPU.
+Camera Mode
+Maintain
+Single Camera Mode.
+Only one camera may run.
+Camera options:
+○ RGB
+○ Thermal
+When RGB is selected
+Thermal must completely stop.
+No capture
+No decoding
+No rendering
+No inference
+No reconnect
+No background threads
+Release every resource.
+When Thermal is selected
+RGB must completely stop.
+Release every resource.
+Never allow both streams to run together.
+Detection
+YOLO26n only.
+Remove support for
+YOLO8
+YOLO11
+YOLO26x
+YOLO26l
+YOLO26m
+YOLO26s
+Only
+YOLO26n
+No model switching.
+One model.
+One backend.
+One inference engine.
+CPU Optimization
+Optimize for Intel CPU.
+Implement
+ONNX Runtime CPUExecutionProvider
+Graph Optimization
+Thread Optimization
+Memory Reuse
+Frame Queue
+Capture Thread
+Inference Thread
+UI Thread
+Frame Skipping
+Resize Before Inference
+Low Latency Rendering
+Queue Size = 1
+Always infer latest frame.
+Never process old frames.
+Detection Pipeline
+Verify
+Camera
+↓
+Frame Capture
+↓
+Resize
+↓
+ONNX Runtime
+↓
+Post Processing
+↓
+Bounding Boxes
+↓
+Tracking
+↓
+Overlay
+↓
+Display
+Every stage must be verified.
+No silent failure.
+Dashboard
+Display
+Backend
+ONNX Runtime CPU
+Provider
+CPUExecutionProvider
+Model
+YOLO26n
+Device
+CPU
+Inference Time
+Current FPS
+Average FPS
+Capture FPS
+CPU Usage
+RAM Usage
+Thread Count
+Frame Queue
+Dropped Frames
+Detection Count
+Current Camera
+Performance Goal
+Target
+Stable detection
+Smooth UI
+No freezing
+Low CPU spikes
+Fast startup
+Reliable inference
+Maintain maximum FPS possible on CPU.
+Logging
+Create
+logs/startup.log
+logs/inference.log
+logs/camera.log
+logs/debug.log
+Log
+Model loading
+ONNX loading
+Frame capture
+Inference
+Overlay
+Tracking
+Errors
+Exceptions
+Timing
+Never suppress exceptions.
+Error Handling
+If ONNX fails
+Show popup
+Display exact reason
+Write complete traceback to log
+Never silently switch backend.
+Memory Management
+Release
+Frames
+NumPy arrays
+OpenCV buffers
+Queues
+Threads
+Resources
+Prevent memory leaks.
+Prevent CPU memory growth.
+Stability
+No crashes.
+No deadlocks.
+No frozen UI.
+No hanging threads.
+No duplicated inference threads.
+No duplicated camera threads.
+Detection Verification
+Before final completion automatically verify
+RGB Detection
+Thermal Detection
+Camera Switching
+Bounding Boxes
+Labels
+Confidence
+Tracking
+Screenshot
+Recording
+CSV Export
+JSON Export
+Settings
+Dashboard
+Application Exit
+Every feature must pass.
+Version
+Rename this version
+DualVision AI Detector
+v1.3 Stable
+CPU Edition
+This version becomes the master branch.
+Future versions
+v1.4
+GPU
+CUDA
+TensorRT
+must be developed from this stable version.
+Final Goal
+Deliver a stable production-ready application with
+YOLO26n
+ONNX Runtime CPUExecutionProvider
+Single Camera Mode
+High FPS CPU Optimization
+Reliable Detection
+Stable Recording
+Stable Logging
+Stable Dashboard
+No GPU code.
+No CUDA code.
+No experimental features.
+No unfinished implementations.
+This version must be the foundation for all future development.

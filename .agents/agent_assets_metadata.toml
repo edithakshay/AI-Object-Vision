@@ -24,3 +24,9 @@ id = "Yzw1llhFDLAPXy21tC8IR"
 uri = "file://DualVisionAI_v1.3.0_GPU.tar.gz"
 type = "unspecified"
 title = "DualVisionAI v1.3.0 — GPU / CUDA Edition"
+
+[[outputs]]
+id = "8gqWMbfhjmw7eE796B-m1"
+uri = "file://DualVisionAI_v1.3_CPUEdition.tar.gz"
+type = "unspecified"
+title = "DualVision AI Detector — v1.3 Stable CPU Edition"
