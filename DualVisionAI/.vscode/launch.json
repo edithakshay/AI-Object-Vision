@@ -2,21 +2,41 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run DualVision AI Detector",
-            "type": "python",
+            "name": "▶ Run DualVision AI",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": []
+        },
+        {
+            "name": "⚙ Setup (First-Time Model Download)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/setup.py",
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
             "justMyCode": false
         },
         {
-            "name": "Generate Icons",
-            "type": "python",
+            "name": "⬇ Download All YOLO26 Models",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/download_all_models.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "🖼 Generate Icons",
+            "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/generate_icons.py",
             "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "justMyCode": false
         }
     ]
 }

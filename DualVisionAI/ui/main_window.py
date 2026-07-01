@@ -389,14 +389,22 @@ class MainWindow(ctk.CTk):
         if thermal_frame is not None:
             self._thermal_panel.update_frame(thermal_frame, fps_th, thermal_det_count, inf_ms)
 
-        # Control panel stats (one call)
+        # Control panel stats (one call) — includes full performance dashboard data
         model_name = self._current_model_name
         device = self._current_device
         cls_count = len(det.class_names) if det else 0
         self._control_panel.update_stats(
             fps_inf, rgb_det_count, thermal_det_count,
             inf_ms, self._session_detection_count,
-            model_name, device, cls_count)
+            model_name, device, cls_count,
+            avg_fps       = det.avg_fps          if det else 0.0,
+            fps_rgb       = det.fps_rgb          if det else 0.0,
+            fps_thermal   = det.fps_thermal      if det else 0.0,
+            active_threads= det.active_threads   if det else 0,
+            queue_size    = det.queue_size       if det else 0,
+            frame_drops   = det.frame_drops      if det else 0,
+            onnx_active   = det.onnx_active      if det else False,
+        )
 
         # Flush pending detection log entries (batched — at most once per tick)
         with self._log_lock:
@@ -425,7 +433,7 @@ class MainWindow(ctk.CTk):
         if self._detecting:
             return
         s = self._settings
-        model_name = s.get("inference", "model_name", "yolov8n.pt")
+        model_name = s.get("inference", "model_name", "yolo26n.pt")
         use_gpu = s.get("inference", "use_gpu", True)
         conf = s.get("detection", "confidence", 0.45)
         iou_val = s.get("detection", "iou", 0.45)
@@ -563,7 +571,7 @@ class MainWindow(ctk.CTk):
                     iou=self._settings.get("detection", "iou", 0.45),
                     frame_skip=self._settings.get("detection", "frame_skip", 1),
                     input_size=self._settings.get("detection", "input_width", 640))
-        SettingsDialog(self, self._settings, on_save=on_save)
+        SettingsDialog(self, self._settings, on_save=on_save, detector=self._detector)
 
     def _on_export_csv(self):
         path = filedialog.asksaveasfilename(

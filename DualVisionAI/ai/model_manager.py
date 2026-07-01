@@ -5,7 +5,6 @@ Downloads .pt once, exports to .onnx for fast CPU inference, then runs 100% offl
 import os
 import logging
 import threading
-import time
 from pathlib import Path
 
 logger = logging.getLogger("DualVisionAI.model")
@@ -18,6 +17,9 @@ SUPPORTED_MODELS = [
     "yolo26l.pt",
     "yolo26x.pt",
 ]
+
+# All YOLO26 models are downloadable
+_DOWNLOADABLE = SUPPORTED_MODELS
 
 _BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 _URLS: dict[str, str] = {m: f"{_BASE_URL}/{m}" for m in SUPPORTED_MODELS}
@@ -120,17 +122,15 @@ class ModelManager:
             self._status(f"Exporting {name} → ONNX (imgsz={imgsz}) …")
             from ultralytics import YOLO
             model = YOLO(str(pt_path))
-            # Export writes next to the .pt file; ultralytics names it <stem>.onnx
             exported = model.export(
                 format="onnx",
                 imgsz=imgsz,
                 simplify=simplify,
-                half=False,       # fp32 is faster on most CPUs
+                half=False,
                 dynamic=False,
                 opset=17,
             )
             exported_p = Path(exported) if exported else None
-            # Move to our models/ dir if ultralytics put it elsewhere
             if exported_p and exported_p.exists() and exported_p != onnx_path:
                 exported_p.rename(onnx_path)
 

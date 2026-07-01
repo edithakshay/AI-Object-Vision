@@ -3,10 +3,19 @@
     "python.terminal.activateEnvironment": true,
     "editor.formatOnSave": false,
     "editor.rulers": [100],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
     "files.exclude": {
         "**/__pycache__": true,
         "**/*.pyc": true,
         "build": true,
-        "dist": true
+        "dist": true,
+        "**/*.tmp": true
+    },
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.extraPaths": ["${workspaceFolder}"],
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "[python]": {
+        "editor.defaultFormatter": null
     }
 }
