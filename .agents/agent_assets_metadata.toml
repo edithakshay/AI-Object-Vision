@@ -18,3 +18,9 @@ id = "pRKdes0GegNLzI7lArIBZ"
 uri = "file://DualVisionAI_v1.2.0_SingleCamera.tar.gz"
 type = "unspecified"
 title = "DualVisionAI v1.2.0 — Single Active Camera Mode"
+
+[[outputs]]
+id = "Yzw1llhFDLAPXy21tC8IR"
+uri = "file://DualVisionAI_v1.3.0_GPU.tar.gz"
+type = "unspecified"
+title = "DualVisionAI v1.3.0 — GPU / CUDA Edition"

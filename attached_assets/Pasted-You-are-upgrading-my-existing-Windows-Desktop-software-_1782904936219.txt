@@ -1,0 +1,243 @@
+You are upgrading my existing Windows Desktop software DualVision AI Detector v1.1.0.
+Do NOT create a new project.
+Modify the existing codebase only.
+The software is already working with:
+Python
+CustomTkinter
+RGB RTSP
+Thermal RTSP
+Single Camera Mode
+YOLO26
+Object Detection
+Screenshots
+Recording
+Detection Logs
+Modern Dashboard
+Current issue:
+The software is still running on:
+Device : CPU
+
+ONNX : PyTorch fallback
+
+GPU : N/A
+The application is NOT using my NVIDIA RTX 3050 Laptop GPU.
+My laptop:
+CPU: Intel Core i5-11400H
+GPU: NVIDIA GeForce RTX 3050 Laptop GPU (4GB)
+Integrated GPU: Intel UHD Graphics
+RAM: 8GB
+Windows 11
+The goal is to migrate inference from CPU to GPU.
+Primary Objective
+Make the software automatically use:
+NVIDIA RTX 3050
+instead of CPU.
+CPU should become fallback only.
+GPU Detection
+At startup automatically detect:
+NVIDIA GPU
+CUDA
+cuDNN
+Torch CUDA
+ONNX Runtime CUDA
+Display the result inside the dashboard.
+Example:
+GPU Detected
+RTX 3050
+CUDA Available
+YES
+Torch CUDA
+YES
+ONNX CUDA
+YES
+Inference Device
+GPU
+Automatic Device Selection
+Device Priority:
+
+CUDA GPU
+↓
+
+ONNX CUDA
+↓
+
+CPU
+Never default to CPU if CUDA is available.
+CUDA Integration
+Use CUDA whenever available.
+Load YOLO26 directly on GPU.
+Do not keep tensors on CPU.
+Move all inference tensors to CUDA.
+Keep preprocessing optimized.
+Avoid unnecessary CPU↔GPU memory copies.
+ONNX Runtime Integration
+Export
+YOLO26n.pt
+↓
+YOLO26n.onnx
+automatically.
+Then use
+ONNX Runtime CUDA Execution Provider.
+Priority:
+CUDAExecutionProvider
+↓
+CPUExecutionProvider
+If CUDAExecutionProvider fails,
+show the exact reason.
+Never silently fall back.
+TensorRT Ready
+Prepare architecture for TensorRT.
+Do not implement full TensorRT yet.
+Create modular backend structure.
+Future backends:
+PyTorch CUDA
+ONNX CUDA
+TensorRT
+CPU
+Backend switching should require minimal code changes.
+Backend Manager
+Create a Backend Manager.
+Responsibilities:
+Detect hardware
+Load backend
+Check CUDA
+Check VRAM
+Check drivers
+Load model
+Select inference backend
+Report errors
+No duplicate code.
+Diagnostics Panel
+Add a Diagnostics section.
+Display:
+GPU Name
+GPU Memory
+CUDA Version
+cuDNN Version
+Torch Version
+Torch CUDA
+ONNX Runtime Version
+ONNX CUDA Provider
+Backend
+Inference Device
+Driver Version
+GPU Utilization
+GPU Temperature (if available)
+VRAM Used
+VRAM Free
+Power Usage (if available)
+Performance Dashboard
+Display:
+Capture Time
+Decode Time
+Inference Time
+Overlay Time
+Rendering Time
+Queue Delay
+Dropped Frames
+Average FPS
+Current FPS
+GPU Usage
+GPU Memory
+CPU Usage
+RAM Usage
+Thread Count
+Optimization
+Implement:
+Pinned Memory
+Half Precision (FP16)
+CUDA Streams
+Non-blocking transfers
+Async inference
+Frame queue
+Inference queue
+Preallocated buffers
+Dynamic batching if supported
+Memory reuse
+Thread-safe queues
+Frame Processing
+Capture thread
+↓
+Decode thread
+↓
+GPU inference
+↓
+Overlay
+↓
+Display
+Never block UI.
+Never block capture.
+Memory Optimization
+Release unused GPU tensors.
+Release CPU buffers.
+Prevent VRAM leaks.
+Prevent RAM leaks.
+Clear queues safely.
+Error Handling
+If CUDA is unavailable:
+Display:
+CUDA not available
+Falling back to CPU
+Include exact error message.
+Settings
+Add:
+Auto Detect Device
+Force GPU
+Force CPU
+Force ONNX
+Backend Selection
+FP16
+CUDA Streams
+Maximum GPU Memory
+Inference Batch
+GPU Cache
+Save settings.
+Logging
+At startup write:
+GPU detected
+CUDA detected
+Driver version
+Backend selected
+Inference device
+ONNX status
+to
+logs/startup.log
+Testing
+Before completion verify:
+RTX detected
+CUDA detected
+Torch CUDA
+ONNX CUDA
+YOLO26 loads
+Inference on GPU
+No CPU fallback
+No crashes
+No memory leaks
+No thread deadlocks
+No UI freezing
+Final Goal
+The dashboard should display something similar to:
+Device: RTX 3050
+Backend: ONNX Runtime CUDA
+CUDA: Enabled
+ONNX: CUDAExecutionProvider
+Inference: GPU
+GPU Usage: 35%
+CPU Usage: 10%
+Current FPS: 25+
+Average FPS: 30+
+Do Not Change
+Do not change:
+UI Design
+Theme
+RTSP Features
+Detection Overlay
+Recording
+Screenshots
+Logs
+Settings
+Single Camera Mode
+Detection Pipeline
+Only replace the inference backend from CPU to GPU.
+Maintain all existing features.
+Optimize for maximum real-time performance on NVIDIA RTX 3050.
