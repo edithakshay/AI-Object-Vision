@@ -1,52 +1,53 @@
 import json
-import os
 from pathlib import Path
 
 DEFAULT_SETTINGS = {
     "rtsp": {
-        "rgb_url": "rtsp://192.168.144.108:554/stream=1",
-        "thermal_url": "rtsp://192.168.144.108:555/stream=2",
+        "rgb_url":         "rtsp://192.168.144.108:554/stream=1",
+        "thermal_url":     "rtsp://192.168.144.108:555/stream=2",
         "reconnect_delay": 3,
-        "buffer_size": 2,
-        "timeout": 10
+        "buffer_size":     2,
+        "timeout":         10
     },
     "detection": {
-        "confidence": 0.45,
-        "iou": 0.45,
-        "input_width": 640,
-        "input_height": 640,
-        "frame_skip": 1,
-        "max_fps": 60,
-        "enable_tracking": True
+        "confidence":       0.45,
+        "iou":              0.45,
+        "input_width":      640,
+        "input_height":     640,
+        "frame_skip":       1,
+        "max_fps":          60,
+        "enable_tracking":  True
     },
     "inference": {
-        "use_gpu": True,
-        "use_fp16": True,
-        "model_name": "yolov8n.pt",
-        "model_path": "models/yolov8n.onnx"
+        "use_gpu":          False,
+        "use_fp16":         False,
+        "cpu_threads":      0,
+        "model_name":       "yolo26n.pt",
+        "use_onnx":         True,
+        "export_onnx_on_load": True
     },
     "ui": {
-        "theme": "dark",
-        "color_accent": "#2563EB",
-        "window_width": 1600,
-        "window_height": 950,
-        "window_x": 100,
-        "window_y": 100,
-        "maximized": False
+        "theme":            "dark",
+        "color_accent":     "#2563EB",
+        "window_width":     1600,
+        "window_height":    950,
+        "window_x":         100,
+        "window_y":         100,
+        "maximized":        False
     },
     "recording": {
-        "output_dir": "recordings",
-        "codec": "mp4v",
-        "fps": 25
+        "output_dir":       "recordings",
+        "codec":            "mp4v",
+        "fps":              25
     },
     "screenshots": {
-        "output_dir": "screenshots",
-        "format": "png"
+        "output_dir":       "screenshots",
+        "format":           "png"
     },
     "logging": {
-        "output_dir": "logs",
-        "csv_enabled": True,
-        "max_log_entries": 100000
+        "output_dir":       "logs",
+        "csv_enabled":      True,
+        "max_log_entries":  100000
     }
 }
 

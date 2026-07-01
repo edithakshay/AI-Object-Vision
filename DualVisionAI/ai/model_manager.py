@@ -1,34 +1,17 @@
 """
-Model manager — downloads YOLO models to local models/ folder.
-After download the app works 100% offline.
-
-YOLO26 is listed as a future placeholder; download is skipped until
-Ultralytics releases it.
+Model Manager — YOLO26 only.
+Downloads .pt once, exports to .onnx for fast CPU inference, then runs 100% offline.
 """
 import os
 import logging
-import shutil
 import threading
 import time
 from pathlib import Path
 
 logger = logging.getLogger("DualVisionAI.model")
 
-# ── Available models ──────────────────────────────────────────────────────────
+# ── YOLO26 models ─────────────────────────────────────────────────────────────
 SUPPORTED_MODELS = [
-    # YOLOv8 family
-    "yolov8n.pt",
-    "yolov8s.pt",
-    "yolov8m.pt",
-    "yolov8l.pt",
-    "yolov8x.pt",
-    # YOLO11 family
-    "yolo11n.pt",
-    "yolo11s.pt",
-    "yolo11m.pt",
-    "yolo11l.pt",
-    "yolo11x.pt",
-    # YOLO26 family (placeholder — not yet released by Ultralytics)
     "yolo26n.pt",
     "yolo26s.pt",
     "yolo26m.pt",
@@ -36,39 +19,19 @@ SUPPORTED_MODELS = [
     "yolo26x.pt",
 ]
 
-# All models are downloadable (YOLO26 URLs now confirmed at v8.4.0)
-_DOWNLOADABLE = set(SUPPORTED_MODELS)
+_BASE_URL = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
+_URLS: dict[str, str] = {m: f"{_BASE_URL}/{m}" for m in SUPPORTED_MODELS}
 
-# Direct download URLs — used by ensure_model() fallback
-_URLS: dict[str, str] = {
-    # YOLOv8
-    "yolov8n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
-    "yolov8s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s.pt",
-    "yolov8m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m.pt",
-    "yolov8l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l.pt",
-    "yolov8x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8x.pt",
-    # YOLO11
-    "yolo11n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
-    "yolo11s.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
-    "yolo11m.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
-    "yolo11l.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l.pt",
-    "yolo11x.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt",
-    # YOLO26
-    "yolo26n.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt",
-    "yolo26s.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt",
-    "yolo26m.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt",
-    "yolo26l.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt",
-    "yolo26x.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt",
+# Approximate model sizes (MB) for UI display
+MODEL_SIZES_MB: dict[str, int] = {
+    "yolo26n.pt":   6,
+    "yolo26s.pt":  20,
+    "yolo26m.pt":  50,
+    "yolo26l.pt":  85,
+    "yolo26x.pt": 125,
 }
 
-# Ultralytics cache search paths (Windows + Linux)
-_CACHE_ROOTS = [
-    Path.home() / ".ultralytics" / "assets",
-    Path.home() / ".cache" / "ultralytics",
-    Path.home() / "AppData" / "Roaming" / "ultralytics",
-    Path.home() / "AppData" / "Local"   / "ultralytics",
-    Path.home() / "AppData" / "Local"   / "Temp",
-]
+MODEL_VERSION = "YOLO26 (Ultralytics v8.4.0)"
 
 
 class ModelManager:
@@ -98,52 +61,100 @@ class ModelManager:
     def get_model_path(self, name: str) -> Path:
         return self.model_dir / name
 
+    def get_onnx_path(self, name: str) -> Path:
+        """Return path of the exported ONNX version of a .pt model."""
+        return self.model_dir / name.replace(".pt", ".onnx")
+
     def is_downloaded(self, name: str) -> bool:
         p = self.get_model_path(name)
-        if not p.exists():
-            return False
-        # Marker file written when Ultralytics manages the cache itself
-        if p.stat().st_size < 100_000:
-            content = p.read_text(errors="ignore")
-            return content.startswith("managed:")
-        return True
+        return p.exists() and p.stat().st_size > 100_000
+
+    def is_onnx_ready(self, name: str) -> bool:
+        p = self.get_onnx_path(name)
+        return p.exists() and p.stat().st_size > 100_000
+
+    def get_model_size_mb(self, name: str) -> float:
+        p = self.get_model_path(name)
+        if p.exists():
+            return p.stat().st_size / 1_048_576
+        return MODEL_SIZES_MB.get(name, 0)
+
+    def get_model_info(self, name: str) -> dict:
+        return {
+            "name":    name,
+            "version": MODEL_VERSION,
+            "size_mb": round(self.get_model_size_mb(name), 1),
+            "path":    str(self.get_model_path(name)),
+            "onnx":    str(self.get_onnx_path(name)) if self.is_onnx_ready(name) else "Not exported",
+            "cache":   str(self.model_dir.resolve()),
+        }
 
     def ensure_model(self, name: str, blocking: bool = True) -> Path | None:
-        """Ensure model is available; download if needed. Returns local path."""
-        if self.is_downloaded(name):
-            self._status(f"Model ready (cached): {name}")
-            return self.get_model_path(name)
-
-        if name not in _DOWNLOADABLE:
-            self._status(
-                f"{name} is not yet released by Ultralytics — cannot download.")
+        """Ensure .pt is available; download if missing. Returns local path."""
+        if name not in SUPPORTED_MODELS:
+            self._status(f"{name} is not a supported YOLO26 model.")
             return None
-
+        if self.is_downloaded(name):
+            self._status(f"Model ready: {name}")
+            return self.get_model_path(name)
         if blocking:
             return self._download(name)
         threading.Thread(target=self._download, args=(name,),
                          daemon=True, name=f"Download-{name}").start()
         return None
 
+    def export_onnx(self, name: str, imgsz: int = 640,
+                    simplify: bool = True) -> Path | None:
+        """Export .pt → .onnx using ultralytics. Returns .onnx path or None."""
+        onnx_path = self.get_onnx_path(name)
+        if self.is_onnx_ready(name):
+            self._status(f"ONNX already exported: {onnx_path.name}")
+            return onnx_path
+
+        pt_path = self.get_model_path(name)
+        if not self.is_downloaded(name):
+            self._status(f"Cannot export — .pt not downloaded: {name}")
+            return None
+
+        try:
+            self._status(f"Exporting {name} → ONNX (imgsz={imgsz}) …")
+            from ultralytics import YOLO
+            model = YOLO(str(pt_path))
+            # Export writes next to the .pt file; ultralytics names it <stem>.onnx
+            exported = model.export(
+                format="onnx",
+                imgsz=imgsz,
+                simplify=simplify,
+                half=False,       # fp32 is faster on most CPUs
+                dynamic=False,
+                opset=17,
+            )
+            exported_p = Path(exported) if exported else None
+            # Move to our models/ dir if ultralytics put it elsewhere
+            if exported_p and exported_p.exists() and exported_p != onnx_path:
+                exported_p.rename(onnx_path)
+
+            if self.is_onnx_ready(name):
+                mb = onnx_path.stat().st_size / 1_048_576
+                self._status(f"ONNX exported: {onnx_path.name} ({mb:.1f} MB)")
+                return onnx_path
+        except Exception as e:
+            logger.error(f"ONNX export failed for {name}: {e}")
+            self._status(f"ONNX export failed: {e}")
+        return None
+
     def list_available(self) -> list[str]:
-        out = []
-        for f in self.model_dir.iterdir():
-            if f.suffix not in (".pt", ".onnx"):
-                continue
-            if self.is_downloaded(f.name):
-                out.append(f.name)
-        return out
+        return [m for m in SUPPORTED_MODELS if self.is_downloaded(m)]
 
     # ── download ─────────────────────────────────────────────────────────────
     def _download(self, name: str) -> Path | None:
-        """Download via direct HTTP (no torch/ultralytics import needed)."""
         from urllib.request import urlretrieve
         from urllib.error import URLError, HTTPError
 
         dest = self.get_model_path(name)
         url  = _URLS.get(name)
         if not url:
-            self._status(f"No download URL known for {name}.")
+            self._status(f"No download URL for {name}.")
             return None
 
         self._status(f"Downloading {name} …")
@@ -162,26 +173,15 @@ class ModelManager:
             self._progress(100.0)
             self._status(f"Saved: {name} ({mb:.1f} MB)")
             return dest
-
         except (HTTPError, URLError) as e:
             logger.error(f"Download failed for {name}: {e}")
             self._status(f"Download failed: {e}")
             self._progress(0.0)
-            if tmp.exists():
-                tmp.unlink()
+            if tmp.exists(): tmp.unlink()
             return None
-
         except Exception as e:
             logger.error(f"Download error for {name}: {e}")
             self._status(f"Error: {e}")
             self._progress(0.0)
-            if tmp.exists():
-                tmp.unlink()
+            if tmp.exists(): tmp.unlink()
             return None
-
-    def _find_in_cache(self, name: str) -> Path | None:
-        for root in _CACHE_ROOTS:
-            p = root / name
-            if p.exists() and p.stat().st_size > 100_000:
-                return p
-        return None

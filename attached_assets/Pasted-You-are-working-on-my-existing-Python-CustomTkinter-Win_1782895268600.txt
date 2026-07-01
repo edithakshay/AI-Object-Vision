@@ -1,0 +1,160 @@
+You are working on my existing Python + CustomTkinter Windows Desktop AI Object Detection software.
+The current software is already functional and includes:
+Dual RTSP camera support
+RGB: rtsp://192.168.144.108:554/stream=1
+Thermal: rtsp://192.168.144.108:555/stream=2
+Live video streaming
+Object detection overlay
+Detection statistics
+Modern CustomTkinter interface
+Do NOT rebuild the project from scratch. Upgrade the existing project while preserving all current functionality.
+1. Remove Old Models
+Completely remove every dependency related to:
+YOLOv8
+YOLO11
+Delete:
+old model loading code
+old inference pipeline
+old download logic
+unused imports
+old settings
+old model selection
+The software must use YOLO26 only.
+There must be only one detection engine.
+2. Use YOLO26 Everywhere
+Replace the complete detection engine with the latest YOLO26.
+Use the official Ultralytics implementation.
+The software must automatically download the YOLO26 model only once.
+After downloading, store it locally.
+After that, everything must run completely offline.
+Never require internet again.
+3. CPU Optimization (Highest Priority)
+This software is mainly designed for CPU inference.
+Optimize the software to fully utilize the improvements of YOLO26.
+Use every optimization possible:
+ONNX Runtime
+FP16 if supported
+OpenCV DNN optimizations where applicable
+Frame queue
+Multi-threaded capture
+Multi-threaded inference
+Separate UI thread
+Zero-copy frame handling where possible
+Efficient memory reuse
+Dynamic frame skipping
+Low latency pipeline
+The goal is to maximize FPS while keeping the UI smooth.
+Take advantage of the reported CPU performance improvements of YOLO26 compared to previous Nano models wherever applicable.
+4. Native End-to-End Detection
+Implement YOLO26's native end-to-end (NMS-free) detection pipeline if supported by the selected model/export.
+Avoid adding unnecessary post-processing that increases latency.
+Keep inference latency as low as possible.
+5. Model Management
+Create a dedicated Model Manager.
+Automatically:
+Check whether the model exists
+Download if missing
+Verify integrity
+Load once
+Reuse for the lifetime of the application
+Never reload the model unnecessarily.
+6. Future-Ready Architecture
+Even though the current software performs Object Detection only, design the codebase so that it can easily support additional YOLO26 tasks later without major refactoring.
+Prepare modular interfaces for:
+Object Detection
+Instance Segmentation
+Pose Estimation
+Image Classification
+Oriented Bounding Boxes (OBB)
+Open-Vocabulary Detection (YOLOE-26)
+These modules should remain disabled until enabled later, but the architecture should be ready.
+7. New Settings Panel
+Add a YOLO26 Settings page.
+Include:
+Model Path
+Model Information
+Input Resolution
+Confidence Threshold
+IoU Threshold
+CPU Threads
+Enable FP16 (if supported)
+Frame Skip
+Maximum FPS
+ONNX Runtime Status
+Device Information
+Model Version
+Model Size
+Model Cache Folder
+Inference Time
+Average FPS
+8. Performance Dashboard
+Display live:
+Current FPS
+Average FPS
+Inference Time (ms)
+Capture Time
+Rendering Time
+CPU Usage
+RAM Usage
+Active Threads
+Queue Size
+Model Loaded
+Device
+ONNX Status
+Frame Drops
+9. Code Cleanup
+Remove all obsolete:
+classes
+functions
+imports
+dependencies
+comments
+configuration
+related to YOLO8 and YOLO11.
+Keep the code clean and maintainable.
+10. Maintain Existing Features
+Do not break any existing functionality.
+Everything that currently works must continue working, including:
+RGB RTSP
+Thermal RTSP
+Detection overlay
+Screenshots
+Video recording
+Detection logs
+Settings
+UI
+Status bar
+Dark theme
+11. Documentation
+Update:
+README.md
+Installation Guide
+Requirements
+Architecture Diagram
+Change Log
+Migration Notes
+Explain that the software has been migrated completely to YOLO26.
+12. Testing
+Before completion:
+Check all imports.
+Check dependencies.
+Check threading.
+Check UI responsiveness.
+Check memory leaks.
+Check camera reconnect.
+Check FPS stability.
+Check model loading.
+Check offline mode.
+Check ONNX Runtime.
+Fix all errors.
+Remove all warnings.
+Final Deliverable
+Return the fully upgraded project.
+The software must:
+Use YOLO26 only
+Remove YOLO8 completely
+Remove YOLO11 completely
+Be optimized for high-performance CPU inference
+Continue working 100% offline after the first model download
+Keep all existing features functional
+Be clean, modular, production-ready, and ready for future expansion to segmentation, pose estimation, OBB, classification, and open-vocabulary detection.
