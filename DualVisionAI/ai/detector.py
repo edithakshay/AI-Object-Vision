@@ -426,80 +426,206 @@ class Detector:
 
         return res
 
+    # ────────────────────────────────────────────────────────────────────────
+    # YOLO output-format auto-detector
+    # ────────────────────────────────────────────────────────────────────────
+    # Three known YOLO ONNX output layouts:
+    #
+    #  FORMAT A — NMS already applied (e.g. YOLOv10 export)
+    #    shape: (1, N≤300, 6)   values: [x1, y1, x2, y2, conf, cls_id]
+    #    → decode directly, no NMS needed.
+    #
+    #  FORMAT B — YOLOv8/v11 style, no objectness
+    #    shape: (1, 84, 8400) or transposed   channels: [cx,cy,w,h, cls0..79]
+    #    → conf = max(cls_scores), NMS required.
+    #
+    #  FORMAT C — YOLOv5/YOLOv7/YOLO26 style, WITH objectness
+    #    shape: (1, 85, 8400) or transposed   channels: [cx,cy,w,h, obj, cls0..79]
+    #    → conf = obj × max(cls_scores), NMS required.
+    #    BUG HISTORY: reading pred[:,4:] as pure class scores (skipping objectness)
+    #    shifts every class ID up by 1, turning person detections into "bicycle".
+    # ────────────────────────────────────────────────────────────────────────
+
     def _postprocess(self, outputs, res: DetectionResult,
                      w0: int, h0: int, sz: int):
-        """
-        Decode YOLO26n output tensor → DetectionResult.
+        raw = outputs[0]      # (1, ?, ?) — batch dimension first
 
-        YOLO26n ONNX output: (1, 84, 8400)
-          - 84 = 4 box coords (cx, cy, w, h) + 80 class scores
-          - Coordinates are in INPUT PIXEL SPACE [0, sz]
-          - Scale to original frame: multiply by (w0/sz) or (h0/sz)
-
-        Supports both (1, 84, N) and (1, N, 84) shapes.
-        """
-        raw  = outputs[0]           # shape: (1, 84, N) or (1, N, 84)
-        pred = raw[0]               # strip batch dim → (84, N) or (N, 84)
-
-        # Normalise to (N, 84): first 4 cols = cx/cy/w/h, rest = class scores
-        if pred.shape[0] < pred.shape[1]:   # (84, N) → transpose → (N, 84)
-            pred = pred.T
-
-        boxes_xywh = pred[:, :4]                    # cx, cy, w, h  in [0, sz]
-        scores     = pred[:, 4:].astype(np.float32) # class scores   in [0, 1]
-
-        best_cls  = scores.argmax(axis=1)
-        best_conf = scores[np.arange(len(scores)), best_cls]
-
-        # ── Diagnostic log for first 3 inferences ──────────────────────────
-        if self._diag_count < 3:
+        # ── Diagnostic: log first 5 inferences ──────────────────────────────
+        do_diag = self._diag_count < 5
+        if do_diag:
             self._diag_count += 1
+            lines = [
+                f"STEP4[{self._diag_count}]  raw_shape={raw.shape}  "
+                f"num_outputs={len(outputs)}  dtype={raw.dtype}  "
+                f"val_range=[{float(raw.min()):.4f}, {float(raw.max()):.4f}]"
+            ]
+            for i, o in enumerate(outputs):
+                lines.append(f"  output[{i}]: shape={o.shape}  dtype={o.dtype}")
+            inf_logger.info("\n".join(lines))
+
+        pred = raw[0]         # strip batch dim
+
+        # ── Format A: NMS-included ───────────────────────────────────────────
+        # Signature: second dim ≤ 1000, third dim == 6
+        if pred.ndim == 2 and pred.shape[1] == 6 and pred.shape[0] <= 1000:
+            if do_diag:
+                inf_logger.info("  → FORMAT A detected (NMS-included)")
+            self._decode_nms_format(pred, res, w0, h0, sz)
+            return
+
+        # ── Normalise to (N_anchors, n_channels) ────────────────────────────
+        # Raw is either (n_channels, N_anchors) or (N_anchors, n_channels).
+        # n_channels is always the smaller dimension.
+        if pred.ndim == 2 and pred.shape[0] < pred.shape[1]:
+            pred = pred.T     # → (N_anchors, n_channels)
+
+        n_anchors, n_ch = pred.shape
+
+        if do_diag:
+            sample_row = pred[n_anchors // 2, :10].tolist()
             inf_logger.info(
-                f"STEP 4 [{self._diag_count}] — "
-                f"raw_shape={raw.shape}  pred_shape={pred.shape}  "
-                f"box_range=[{boxes_xywh.min():.2f}, {boxes_xywh.max():.2f}]  "
-                f"conf_max={best_conf.max():.4f}  conf_min={best_conf.min():.6f}  "
+                f"  pred_shape=({n_anchors}, {n_ch})  "
+                f"mid_row_first10={[round(v,4) for v in sample_row]}")
+
+        # ── Format C: objectness present — channels = 4 + 1 + n_cls ────────
+        # Exact match: n_ch == n_classes + 5  (85 for COCO-80)
+        n_cls_c = n_ch - 5
+        if n_cls_c > 0:
+            obj_col = pred[:, 4].astype(np.float32)
+            # Objectness is sigmoid-activated → values genuinely in [0, 1].
+            # If that column is truly objectness, its maximum will be ≤ 1.
+            if obj_col.max() <= 1.01:
+                if do_diag:
+                    inf_logger.info(
+                        f"  → FORMAT C detected (objectness col4)  "
+                        f"n_cls={n_cls_c}  "
+                        f"obj_max={obj_col.max():.4f}  "
+                        f"obj_mean={obj_col.mean():.6f}")
+                self._decode_v5_format(pred, n_cls_c, res, w0, h0, sz, do_diag)
+                return
+
+        # ── Format B: no objectness — channels = 4 + n_cls ──────────────────
+        n_cls_b = n_ch - 4
+        if n_cls_b > 0:
+            if do_diag:
+                inf_logger.info(
+                    f"  → FORMAT B detected (no objectness)  n_cls={n_cls_b}")
+            self._decode_v8_format(pred, n_cls_b, res, w0, h0, sz, do_diag)
+            return
+
+        inf_logger.error(
+            f"_postprocess: unrecognised output  "
+            f"pred_shape={pred.shape} — no detections decoded.")
+
+    # ── Format A: NMS already applied ──────────────────────────────────────────
+    def _decode_nms_format(self, pred, res: DetectionResult,
+                           w0: int, h0: int, sz: int):
+        """pred shape (N, 6): [x1, y1, x2, y2, conf, cls_id]  xyxy in input px space."""
+        sx, sy = w0 / sz, h0 / sz
+        n_kept = 0
+        for row in pred:
+            x1, y1, x2, y2, conf, cls_f = (float(v) for v in row)
+            if conf < self.conf:
+                continue
+            ci = int(cls_f)
+            res.boxes.append([x1 * sx, y1 * sy, x2 * sx, y2 * sy])
+            res.class_ids.append(ci)
+            res.confidences.append(conf)
+            res.class_names.append(
+                self._class_names[ci] if ci < len(self._class_names) else str(ci))
+            res.track_ids.append(0)
+            n_kept += 1
+        inf_logger.debug(f"NMS-format: {n_kept} detections after conf filter.")
+
+    # ── Format C: YOLOv5/YOLO26 — WITH objectness ──────────────────────────────
+    def _decode_v5_format(self, pred, n_cls: int, res: DetectionResult,
+                          w0: int, h0: int, sz: int, do_diag: bool):
+        """
+        pred shape (N, 5+n_cls): [cx, cy, w, h, obj, cls0..cls_{n_cls-1}]
+        Coordinates in INPUT PIXEL SPACE [0, sz].
+        Final confidence = objectness × max(class_scores).
+        """
+        boxes_xywh = pred[:, :4].astype(np.float32)
+        obj_conf   = pred[:, 4].astype(np.float32)          # objectness ∈ [0,1]
+        cls_scores = pred[:, 5:5 + n_cls].astype(np.float32)# class probs ∈ [0,1]
+
+        # Combined confidence: same calculation as official Ultralytics YOLOv5 post-proc
+        best_cls  = cls_scores.argmax(axis=1)
+        best_cls_score = cls_scores[np.arange(len(cls_scores)), best_cls]
+        best_conf = obj_conf * best_cls_score
+
+        if do_diag:
+            inf_logger.info(
+                f"  v5-decode  obj_max={obj_conf.max():.4f}  "
+                f"cls_max={best_cls_score.max():.4f}  "
+                f"combined_max={best_conf.max():.4f}  "
                 f"above_thresh={int((best_conf >= self.conf).sum())}  "
                 f"threshold={self.conf}")
 
+        self._nms_and_fill(boxes_xywh, best_conf, best_cls, res, w0, h0, sz)
+
+    # ── Format B: YOLOv8/v11 — NO objectness ───────────────────────────────────
+    def _decode_v8_format(self, pred, n_cls: int, res: DetectionResult,
+                          w0: int, h0: int, sz: int, do_diag: bool):
+        """
+        pred shape (N, 4+n_cls): [cx, cy, w, h, cls0..cls_{n_cls-1}]
+        Coordinates in INPUT PIXEL SPACE [0, sz].
+        Final confidence = max(class_scores) directly.
+        """
+        boxes_xywh = pred[:, :4].astype(np.float32)
+        cls_scores = pred[:, 4:4 + n_cls].astype(np.float32)
+
+        best_cls  = cls_scores.argmax(axis=1)
+        best_conf = cls_scores[np.arange(len(cls_scores)), best_cls]
+
+        if do_diag:
+            inf_logger.info(
+                f"  v8-decode  conf_max={best_conf.max():.4f}  "
+                f"above_thresh={int((best_conf >= self.conf).sum())}  "
+                f"threshold={self.conf}")
+
+        self._nms_and_fill(boxes_xywh, best_conf, best_cls, res, w0, h0, sz)
+
+    # ── Shared: threshold → NMS → fill result ──────────────────────────────────
+    def _nms_and_fill(self, boxes_xywh, best_conf, best_cls,
+                      res: DetectionResult, w0: int, h0: int, sz: int):
+        """
+        Apply confidence mask, scale coords from input-px to original-frame-px,
+        run NMS once, then populate res.
+        Coordinates: cx/cy/w/h in [0, sz] → scale by (w0/sz), (h0/sz).
+        """
         mask = best_conf >= self.conf
         if not mask.any():
             return
 
-        bx  = boxes_xywh[mask]
-        cf  = best_conf[mask]
-        cl  = best_cls[mask]
+        bx = boxes_xywh[mask]
+        cf = best_conf[mask]
+        cl = best_cls[mask]
 
-        # Scale from input pixel space → original frame pixel space
-        # YOLO26n cx/cy/w/h are in [0, sz] — divide by sz then multiply by w0/h0
-        # Equivalent: multiply by (w0/sz) or (h0/sz).
-        # BUG HISTORY: was (cx - bw/2) * sz * sx which equals (cx - bw/2) * w0
-        #              — off by a factor of sz, placing every box far off screen.
-        sx = w0 / sz   # e.g. 1920/640 = 3.0
-        sy = h0 / sz   # e.g. 1080/640 = 1.6875
+        sx = w0 / sz   # scale input-px → original frame px
+        sy = h0 / sz
 
-        raw_boxes:   list = []
-        raw_confs:   list = []
-        raw_cls:     list = []
+        raw_boxes: list = []
+        raw_confs: list = []
+        raw_cls:   list = []
 
         for i in range(len(bx)):
-            cx, cy, bw, bh = float(bx[i,0]), float(bx[i,1]), float(bx[i,2]), float(bx[i,3])
-            x1 = (cx - bw/2) * sx   # ← FIX: was * sz * sx (off by ×640)
-            y1 = (cy - bh/2) * sy
-            x2 = (cx + bw/2) * sx
-            y2 = (cy + bh/2) * sy
+            cx, cy, bw, bh = float(bx[i,0]), float(bx[i,1]), \
+                              float(bx[i,2]), float(bx[i,3])
+            x1 = (cx - bw / 2) * sx
+            y1 = (cy - bh / 2) * sy
+            x2 = (cx + bw / 2) * sx
+            y2 = (cy + bh / 2) * sy
             raw_boxes.append([x1, y1, x2, y2])
             raw_confs.append(float(cf[i]))
             raw_cls.append(int(cl[i]))
 
-        # NMS
+        # NMS — applied exactly once (not for Format A which already has NMS)
         if len(raw_boxes) > 1:
-            rects = [[b[0], b[1], b[2]-b[0], b[3]-b[1]] for b in raw_boxes]
+            rects = [[b[0], b[1], b[2] - b[0], b[3] - b[1]] for b in raw_boxes]
             idx   = cv2.dnn.NMSBoxes(rects, raw_confs, self.conf, self.iou)
-            if idx is not None and len(idx):
-                idx = [int(i) for i in idx.flatten()]
-            else:
-                idx = []
+            idx   = ([int(i) for i in idx.flatten()]
+                     if idx is not None and len(idx) else [])
         else:
             idx = list(range(len(raw_boxes)))
 
