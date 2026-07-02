@@ -133,6 +133,10 @@ class Detector:
         self._inf_log_counter = 0
         self._INF_LOG_EVERY   = 100   # log every N inferences
 
+        # Diagnostic counters (reset on each load)
+        self._diag_count      = 0   # counts how many times we've logged raw output
+        self._debug_img_saved = False
+
     # ── Load ──────────────────────────────────────────────────────────────────
     def load(self) -> bool:
         """
@@ -144,8 +148,11 @@ class Detector:
             self._session    = self._bm.build_ort_session(str(self._onnx_path))
             self._input_name = self._session.get_inputs()[0].name
             self._parse_class_names()
-            self._prewarm()
-            self._loaded = True
+            self._log_onnx_io()   # STEP 3: log exact input/output shapes
+            self._prewarm()       # STEP 4: warm-up also logs output shape + dtype
+            self._loaded      = True
+            self._diag_count      = 0
+            self._debug_img_saved = False
             logger.info(
                 f"Model loaded — input='{self._input_name}'  "
                 f"classes={len(self._class_names)}  "
@@ -175,13 +182,29 @@ class Detector:
         # fallback: 80-class COCO
         self._class_names = [str(i) for i in range(80)]
 
+    def _log_onnx_io(self):
+        """Log ONNX input/output shapes to startup.log and debug.log."""
+        try:
+            inp = self._session.get_inputs()[0]
+            inf_logger.info(
+                f"ONNX INPUT  — name='{inp.name}'  "
+                f"shape={inp.shape}  type={inp.type}")
+            for i, out in enumerate(self._session.get_outputs()):
+                inf_logger.info(
+                    f"ONNX OUTPUT[{i}] — name='{out.name}'  "
+                    f"shape={out.shape}  type={out.type}")
+        except Exception as e:
+            logger.warning(f"Could not log ONNX I/O info: {e}")
+
     def _prewarm(self):
         """One warm-up inference to let ORT JIT its kernels."""
         try:
             sz   = self.input_size
             blob = np.zeros((1, 3, sz, sz), dtype=np.float32)
-            self._session.run(None, {self._input_name: blob})
-            logger.info("ORT warm-up inference complete.")
+            out  = self._session.run(None, {self._input_name: blob})
+            inf_logger.info(
+                f"ORT warm-up complete — "
+                f"output[0].shape={out[0].shape}  dtype={out[0].dtype}")
         except Exception as e:
             logger.warning(f"Warm-up failed (non-fatal): {e}")
 
@@ -372,6 +395,24 @@ class Detector:
 
         res.preprocess_ms = (time.perf_counter() - t_pre) * 1000.0
 
+        # ── Debug: save preprocessed image once ───────────────────────────────
+        if not self._debug_img_saved:
+            try:
+                import os
+                os.makedirs("debug", exist_ok=True)
+                dbg = (self._blob[0].transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
+                cv2.imwrite("debug/preprocessed.png", dbg)
+                inf_logger.info(
+                    f"STEP 2 — Saved debug/preprocessed.png  "
+                    f"frame_shape={frame.shape}  "
+                    f"blob_shape={self._blob.shape}  "
+                    f"blob_dtype={self._blob.dtype}  "
+                    f"blob_min={self._blob.min():.4f}  "
+                    f"blob_max={self._blob.max():.4f}")
+                self._debug_img_saved = True
+            except Exception as _de:
+                logger.warning(f"Debug image save failed (non-fatal): {_de}")
+
         # ── ONNX inference ────────────────────────────────────────────────────
         t_inf   = time.perf_counter()
         outputs = self._session.run(None, {self._input_name: self._blob})
@@ -389,21 +430,39 @@ class Detector:
                      w0: int, h0: int, sz: int):
         """
         Decode YOLO26n output tensor → DetectionResult.
-        Supports both (1, 84, N) and (1, N, 84) output shapes.
+
+        YOLO26n ONNX output: (1, 84, 8400)
+          - 84 = 4 box coords (cx, cy, w, h) + 80 class scores
+          - Coordinates are in INPUT PIXEL SPACE [0, sz]
+          - Scale to original frame: multiply by (w0/sz) or (h0/sz)
+
+        Supports both (1, 84, N) and (1, N, 84) shapes.
         """
         raw  = outputs[0]           # shape: (1, 84, N) or (1, N, 84)
-        pred = raw[0]               # strip batch dim
+        pred = raw[0]               # strip batch dim → (84, N) or (N, 84)
 
         # Normalise to (N, 84): first 4 cols = cx/cy/w/h, rest = class scores
-        if pred.shape[0] < pred.shape[1]:   # (84, N) → (N, 84)
+        if pred.shape[0] < pred.shape[1]:   # (84, N) → transpose → (N, 84)
             pred = pred.T
 
-        boxes_xywh = pred[:, :4]
-        scores     = pred[:, 4:].astype(np.float32)
+        boxes_xywh = pred[:, :4]                    # cx, cy, w, h  in [0, sz]
+        scores     = pred[:, 4:].astype(np.float32) # class scores   in [0, 1]
 
         best_cls  = scores.argmax(axis=1)
         best_conf = scores[np.arange(len(scores)), best_cls]
-        mask      = best_conf >= self.conf
+
+        # ── Diagnostic log for first 3 inferences ──────────────────────────
+        if self._diag_count < 3:
+            self._diag_count += 1
+            inf_logger.info(
+                f"STEP 4 [{self._diag_count}] — "
+                f"raw_shape={raw.shape}  pred_shape={pred.shape}  "
+                f"box_range=[{boxes_xywh.min():.2f}, {boxes_xywh.max():.2f}]  "
+                f"conf_max={best_conf.max():.4f}  conf_min={best_conf.min():.6f}  "
+                f"above_thresh={int((best_conf >= self.conf).sum())}  "
+                f"threshold={self.conf}")
+
+        mask = best_conf >= self.conf
         if not mask.any():
             return
 
@@ -411,8 +470,13 @@ class Detector:
         cf  = best_conf[mask]
         cl  = best_cls[mask]
 
-        sx = w0 / sz
-        sy = h0 / sz
+        # Scale from input pixel space → original frame pixel space
+        # YOLO26n cx/cy/w/h are in [0, sz] — divide by sz then multiply by w0/h0
+        # Equivalent: multiply by (w0/sz) or (h0/sz).
+        # BUG HISTORY: was (cx - bw/2) * sz * sx which equals (cx - bw/2) * w0
+        #              — off by a factor of sz, placing every box far off screen.
+        sx = w0 / sz   # e.g. 1920/640 = 3.0
+        sy = h0 / sz   # e.g. 1080/640 = 1.6875
 
         raw_boxes:   list = []
         raw_confs:   list = []
@@ -420,10 +484,10 @@ class Detector:
 
         for i in range(len(bx)):
             cx, cy, bw, bh = float(bx[i,0]), float(bx[i,1]), float(bx[i,2]), float(bx[i,3])
-            x1 = (cx - bw/2) * sz * sx
-            y1 = (cy - bh/2) * sz * sy
-            x2 = (cx + bw/2) * sz * sx
-            y2 = (cy + bh/2) * sz * sy
+            x1 = (cx - bw/2) * sx   # ← FIX: was * sz * sx (off by ×640)
+            y1 = (cy - bh/2) * sy
+            x2 = (cx + bw/2) * sx
+            y2 = (cy + bh/2) * sy
             raw_boxes.append([x1, y1, x2, y2])
             raw_confs.append(float(cf[i]))
             raw_cls.append(int(cl[i]))
