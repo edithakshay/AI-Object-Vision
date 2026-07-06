@@ -471,14 +471,26 @@ class MainWindow(ctk.CTk):
                     for b, c, cf in zip(result.boxes, result.class_ids,
                                         result.confidences)]
             tracked = tracker.update(dets)
-            result.boxes       = [t["box"]       for t in tracked]
-            result.class_ids   = [t["class_id"]  for t in tracked]
-            result.confidences = [t["confidence"] for t in tracked]
-            names = self._detector.class_names
-            result.class_names = [
-                names[t["class_id"]] if t["class_id"] < len(names) else "?"
-                for t in tracked]
-            result.track_ids = [t["track_id"] for t in tracked]
+
+            if tracked:
+                # Normal path — tracker returned confirmed tracks
+                result.boxes       = [t["box"]       for t in tracked]
+                result.class_ids   = [t["class_id"]  for t in tracked]
+                result.confidences = [t["confidence"] for t in tracked]
+                names = self._detector.class_names
+                result.class_names = [
+                    names[t["class_id"]] if t["class_id"] < len(names) else "?"
+                    for t in tracked]
+                result.track_ids = [t["track_id"] for t in tracked]
+            else:
+                # OVERLAY RULE: tracker returned nothing (e.g. transitional frame)
+                # → keep the raw ONNX detections so boxes are always visible.
+                # track_ids remain as-is (empty list from DetectionResult default).
+                names = self._detector.class_names
+                result.class_names = [
+                    names[cid] if cid < len(names) else "?"
+                    for cid in result.class_ids]
+                result.track_ids = []
 
         if stream == "rgb":
             self._rgb_draw_result = result

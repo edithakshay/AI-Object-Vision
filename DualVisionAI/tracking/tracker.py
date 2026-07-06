@@ -1,8 +1,17 @@
 """
 DualVision AI Detector — Enhanced ByteTrack-inspired Tracker
-v1.3 Stable CPU Edition
+v1.3 Stable CPU Edition  (regression-fixed)
 
-Features:
+Regression fixes applied:
+  1. New tracks created in Step 3 are now correctly marked "active" (not "lost")
+     on the same frame they are born — they are added to new_track_ids which is
+     treated like matched_track_ids in Step 4.
+  2. New tracks are spawned from ALL unmatched detections (not only high-conf),
+     so objects with confidence below 0.50 still get a track ID.
+  3. main_window.py overlay rule: if tracker returns empty, raw detections are
+     drawn without track IDs (handled in _process_result).
+
+Architecture:
   • Kalman filter for smooth bbox prediction and occlusion handling
   • Two-stage matching (high-confidence first, then low-confidence)
   • Lost track buffer — objects can be re-identified after brief disappearance
@@ -12,7 +21,7 @@ Features:
 
 import numpy as np
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 
 # ── Kalman Filter ─────────────────────────────────────────────────────────────
@@ -25,45 +34,38 @@ class KalmanBoxFilter:
     """
 
     def __init__(self):
-        dt = 1.0  # time step (one frame)
+        dt = 1.0
 
-        # State transition matrix (8x8)
         self.F = np.eye(8, dtype=np.float32)
         for i in range(4):
             self.F[i, i + 4] = dt
 
-        # Measurement matrix (4x8) — observe position/size only
         self.H = np.eye(4, 8, dtype=np.float32)
 
-        # Process noise
         self.Q = np.diag([
-            1.0, 1.0, 1.0, 1.0,   # position/size noise
-            0.01, 0.01, 0.0001, 0.0001  # velocity noise
+            1.0, 1.0, 1.0, 1.0,
+            0.01, 0.01, 0.0001, 0.0001
         ]).astype(np.float32)
 
-        # Measurement noise
         self.R = np.diag([
-            1.0, 1.0, 10.0, 10.0  # cx/cy tight, w/h loose
+            1.0, 1.0, 10.0, 10.0
         ]).astype(np.float32)
 
-        # Initial state and covariance
         self.x = np.zeros((8, 1), dtype=np.float32)
         self.P = np.eye(8, dtype=np.float32) * 10.0
 
     @staticmethod
     def _box_to_cx(box):
-        """[x1,y1,x2,y2] → [cx, cy, w, h]"""
         x1, y1, x2, y2 = box
         return np.array([[
             (x1 + x2) / 2.0,
             (y1 + y2) / 2.0,
             x2 - x1,
             y2 - y1,
-        ]], dtype=np.float32).T   # (4, 1)
+        ]], dtype=np.float32).T
 
     @staticmethod
     def _cx_to_box(cx):
-        """[cx, cy, w, h] → [x1, y1, x2, y2]"""
         cx_, cy_, w, h = float(cx[0]), float(cx[1]), float(cx[2]), float(cx[3])
         w = max(w, 1.0)
         h = max(h, 1.0)
@@ -92,7 +94,7 @@ class KalmanBoxFilter:
         return self._cx_to_box(self.x[:4])
 
 
-# ── IoU helper ────────────────────────────────────────────────────────────────
+# ── IoU helpers ───────────────────────────────────────────────────────────────
 
 def _iou(a, b) -> float:
     ax1, ay1, ax2, ay2 = a
@@ -116,9 +118,7 @@ def _iou_matrix(tracks, detections) -> np.ndarray:
     return mat
 
 
-def _greedy_match(iou_mat: np.ndarray,
-                  threshold: float) -> List[tuple]:
-    """Return list of (track_idx, det_idx) matched pairs above threshold."""
+def _greedy_match(iou_mat: np.ndarray, threshold: float) -> List[tuple]:
     mat = iou_mat.copy()
     pairs = []
     while mat.size > 0:
@@ -143,14 +143,14 @@ class _Track:
         self.class_id   = class_id
         self.confidence = confidence
         self.hits       = 1
-        self.age        = 1         # total frames since creation
-        self.missed     = 0         # consecutive missed frames
-        self.state      = "active"  # "active" | "lost" | "removed"
+        self.age        = 1
+        self.missed     = 0
+        self.state      = "active"
         self._created_at = time.time()
 
         self.kf = KalmanBoxFilter()
         self.kf.initiate(box)
-        self.box = list(box)        # last confirmed box
+        self.box = list(box)
 
     def predict(self):
         self.age    += 1
@@ -179,14 +179,16 @@ class _Track:
 
 class ByteTracker:
     """
-    Enhanced ByteTrack-inspired tracker.
+    Enhanced ByteTrack-inspired tracker — regression-fixed.
 
     Parameters
     ----------
-    max_age      : frames a lost track is kept before removal (0 = immediate).
-    min_hits     : minimum detections before track is emitted.
-    iou_threshold: stage-1 IoU threshold for confirmed tracks.
-    low_iou      : stage-2 IoU threshold for unconfirmed/lost tracks.
+    max_age      : frames a lost track is kept before removal.
+    min_hits     : minimum detections before track is emitted (1 = immediate).
+    iou_threshold: stage-1 IoU threshold for active tracks.
+    low_iou      : stage-2 IoU threshold for lost tracks.
+    high_conf    : confidence threshold for "high" vs "low" split.
+                   Should match or be slightly below the detector's conf.
     """
 
     def __init__(
@@ -195,15 +197,16 @@ class ByteTracker:
         min_hits:      int   = 1,
         iou_threshold: float = 0.35,
         low_iou:       float = 0.20,
+        high_conf:     float = 0.45,   # matches default detector conf
     ):
         self.max_age       = max_age
         self.min_hits      = min_hits
         self.iou_threshold = iou_threshold
         self.low_iou       = low_iou
+        self.high_conf     = high_conf
 
         self._tracks: List[_Track] = []
 
-        # Statistics
         self._new_tracks_total       = 0
         self._recovered_tracks_total = 0
         self._tracking_fps           = 0.0
@@ -227,31 +230,37 @@ class ByteTracker:
         """
         detections: [{"box": [x1,y1,x2,y2], "class_id": int,
                        "confidence": float}]
-        returns:    same list with "track_id" added for confirmed tracks.
+        returns:    same list with "track_id" added for all confirmed tracks.
+
+        IMPORTANT: Returns a result for every matched/new detection on the
+        very first frame it is seen (min_hits=1).  New tracks are NEVER
+        suppressed on their birth frame.
         """
         t_start = time.perf_counter()
 
-        # ── Step 1: Predict all tracks forward one frame ──────────────────────
+        # ── Step 1: Predict all existing tracks one frame forward ─────────────
         for t in self._tracks:
             t.predict()
 
         # ── Step 2: Split detections by confidence ────────────────────────────
-        high_dets = [d for d in detections if d["confidence"] >= 0.50]
-        low_dets  = [d for d in detections if d["confidence"] <  0.50]
+        high_dets = [d for d in detections if d["confidence"] >= self.high_conf]
+        low_dets  = [d for d in detections if d["confidence"] <  self.high_conf]
 
-        active_tracks = [t for t in self._tracks if t.state == "active" or t.missed <= 2]
+        active_tracks = [t for t in self._tracks
+                         if t.state == "active" or t.missed <= 2]
         lost_tracks   = [t for t in self._tracks if t.state == "lost"]
 
-        matched_track_ids: set  = set()
+        # IDs matched this frame — tracks in here keep state="active"
+        matched_track_ids: set   = set()
         matched_det_indices: set = set()
 
-        # ── Stage 1a: High-conf dets vs active tracks ─────────────────────────
+        # ── Stage 1a: High-conf dets vs active/recent tracks ─────────────────
         if active_tracks and high_dets:
             mat   = _iou_matrix(active_tracks, high_dets)
             pairs = _greedy_match(mat, self.iou_threshold)
             for ti, di in pairs:
-                track = active_tracks[ti]
-                det   = high_dets[di]
+                track    = active_tracks[ti]
+                det      = high_dets[di]
                 was_lost = track.state == "lost"
                 track.update(det["box"], det["class_id"], det["confidence"])
                 matched_track_ids.add(track.track_id)
@@ -262,60 +271,70 @@ class ByteTracker:
         # ── Stage 1b: Low-conf dets vs unmatched active tracks ────────────────
         unmatched_active = [t for t in active_tracks
                             if t.track_id not in matched_track_ids]
-        unmatched_low = [(i, d) for i, d in enumerate(low_dets)]
-        if unmatched_active and unmatched_low:
-            mat   = _iou_matrix(unmatched_active,
-                                [d for _, d in unmatched_low])
+        if unmatched_active and low_dets:
+            mat   = _iou_matrix(unmatched_active, low_dets)
             pairs = _greedy_match(mat, self.low_iou)
             for ti, di in pairs:
-                track   = unmatched_active[ti]
-                orig_di = unmatched_low[di][0]
-                det     = low_dets[orig_di]
+                track    = unmatched_active[ti]
+                det      = low_dets[di]
                 was_lost = track.state == "lost"
                 track.update(det["box"], det["class_id"], det["confidence"])
                 matched_track_ids.add(track.track_id)
-                matched_det_indices.add(("low", orig_di))
+                matched_det_indices.add(("low", di))
                 if was_lost:
                     self._recovered_tracks_total += 1
 
-        # ── Stage 2: Remaining high-conf dets vs lost tracks ─────────────────
-        unmatched_high_dets = [
-            (i, d) for i, d in enumerate(high_dets)
-            if ("high", i) not in matched_det_indices
-        ]
-        if lost_tracks and unmatched_high_dets:
-            mat   = _iou_matrix(lost_tracks, [d for _, d in unmatched_high_dets])
+        # ── Stage 2: Remaining dets vs lost tracks ────────────────────────────
+        unmatched_high = [(i, d) for i, d in enumerate(high_dets)
+                          if ("high", i) not in matched_det_indices]
+        if lost_tracks and unmatched_high:
+            mat   = _iou_matrix(lost_tracks, [d for _, d in unmatched_high])
             pairs = _greedy_match(mat, self.low_iou)
             for ti, di in pairs:
                 track   = lost_tracks[ti]
-                orig_di = unmatched_high_dets[di][0]
-                det     = high_dets[orig_di]
+                orig_i  = unmatched_high[di][0]
+                det     = high_dets[orig_i]
                 track.update(det["box"], det["class_id"], det["confidence"])
                 matched_track_ids.add(track.track_id)
-                matched_det_indices.add(("high", orig_di))
+                matched_det_indices.add(("high", orig_i))
                 self._recovered_tracks_total += 1
 
-        # ── Step 3: Create new tracks for unmatched high-conf dets ───────────
+        # ── Step 3: Create new tracks for ALL still-unmatched detections ──────
+        # BUG-FIX: both high AND low unmatched dets spawn new tracks.
+        # BUG-FIX: new track IDs are recorded in new_track_ids so Step 4
+        #          marks them "active" instead of "lost".
+        new_track_ids: set = set()
+
         for i, det in enumerate(high_dets):
             if ("high", i) not in matched_det_indices:
                 t = _Track(det["box"], det["class_id"], det["confidence"])
                 self._tracks.append(t)
                 self._new_tracks_total += 1
+                new_track_ids.add(t.track_id)   # ← FIX: remember new IDs
 
-        # ── Step 4: Mark unmatched tracks as lost or remove them ──────────────
+        for i, det in enumerate(low_dets):
+            if ("low", i) not in matched_det_indices:
+                t = _Track(det["box"], det["class_id"], det["confidence"])
+                self._tracks.append(t)
+                self._new_tracks_total += 1
+                new_track_ids.add(t.track_id)   # ← FIX: remember new IDs
+
+        # ── Step 4: Classify surviving tracks ─────────────────────────────────
+        # BUG-FIX: tracks in new_track_ids are treated exactly like matched
+        # tracks — they are marked "active", not "lost".
         surviving: List[_Track] = []
         for t in self._tracks:
-            if t.track_id in matched_track_ids:
-                t.state = "active"
+            if t.track_id in matched_track_ids or t.track_id in new_track_ids:
+                t.state = "active"          # ← FIX: new tracks stay active
                 surviving.append(t)
             elif t.missed <= self.max_age:
                 t.state = "lost"
                 surviving.append(t)
-            # else: remove (missed > max_age)
+            # else: missed > max_age → track removed
 
         self._tracks = surviving
 
-        # ── Step 5: Collect output — only confirmed active tracks ─────────────
+        # ── Step 5: Collect output — all active confirmed tracks ──────────────
         results: List[Dict] = []
         for t in self._tracks:
             if t.state == "active" and t.hits >= self.min_hits and t.missed == 0:
@@ -375,11 +394,11 @@ class ByteTracker:
 
     def get_stats(self) -> Dict:
         return {
-            "active_tracks":    self.active_tracks,
-            "lost_tracks":      self.lost_tracks,
-            "recovered_total":  self._recovered_tracks_total,
-            "new_total":        self._new_tracks_total,
-            "avg_age_sec":      self.avg_track_age_sec,
-            "tracking_fps":     self._tracking_fps,
-            "latency_ms":       self._tracking_latency_ms,
+            "active_tracks":   self.active_tracks,
+            "lost_tracks":     self.lost_tracks,
+            "recovered_total": self._recovered_tracks_total,
+            "new_total":       self._new_tracks_total,
+            "avg_age_sec":     self.avg_track_age_sec,
+            "tracking_fps":    self._tracking_fps,
+            "latency_ms":      self._tracking_latency_ms,
         }

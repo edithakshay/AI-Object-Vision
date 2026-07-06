@@ -42,3 +42,9 @@ id = "mJkYVsv32wuwymtwASDAu"
 uri = "file://DualVisionAI_v1.3_Tracking.tar.gz"
 type = "unspecified"
 title = "DualVisionAI_v1.3_Tracking.tar.gz"
+
+[[outputs]]
+id = "pz7aU7FqrywKGd45vGoO2"
+uri = "file://DualVisionAI_v1.3_Fixed.tar.gz"
+type = "unspecified"
+title = "DualVisionAI_v1.3_Fixed.tar.gz — Regression Fixed"

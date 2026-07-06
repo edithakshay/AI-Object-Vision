@@ -1,0 +1,154 @@
+You are working on my existing project:
+DualVisionAI_v1.3_Tracking
+IMPORTANT
+The application was previously working correctly.
+The following features were already functional:
+YOLO26n
+ONNX Runtime CPU
+RGB Streaming
+Thermal Streaming
+Camera Switching
+Object Detection
+Bounding Boxes
+Labels
+Confidence
+Detection Overlay
+Performance Dashboard
+Recently I asked you to improve:
+UI Layout
+Tracking Panel
+Detection Panel
+Scrolling
+Dashboard Visibility
+These UI improvements were successful.
+However, while implementing them, you accidentally broke the detection pipeline.
+This is a regression bug.
+DO NOT REDESIGN
+Do not redesign UI.
+Do not optimize performance.
+Do not change ONNX Runtime.
+Do not modify camera code unless necessary.
+Fix only the regression.
+Current Bug
+Detection is enabled.
+Camera is streaming.
+ONNX Runtime is loaded.
+Model is loaded.
+Inference is running.
+But
+No bounding boxes appear.
+No labels appear.
+Tracking shows zero.
+Detection panel stays empty.
+Previously this worked correctly.
+Your Task
+Find exactly which recent UI or tracking change disabled the working detection pipeline.
+Compare the last working version with the current version.
+Restore detection without removing the UI improvements.
+Compare Both Versions
+Compare:
+Previous Stable Version
+↓
+Current Version
+Check differences in:
+Detection Manager
+Inference Thread
+Frame Queue
+Detection Callback
+Overlay Renderer
+Tracking Module
+UI Update Loop
+Dashboard Update
+Bounding Box Drawing
+Signal Connections
+Event Callbacks
+Do not guess.
+Identify the exact code change.
+Verify Detection Pipeline
+Camera
+↓
+Frame Capture
+↓
+Preprocessing
+↓
+ONNX Runtime
+↓
+Decoded Detection
+↓
+Tracking
+↓
+Overlay
+↓
+UI
+↓
+Dashboard
+Verify every stage.
+Tracking Rule
+If tracking fails,
+Detection must still work.
+Disable tracking temporarily if required.
+Detection should never depend on tracking.
+Tracking is optional.
+Detection is mandatory.
+Overlay Rule
+If tracking returns zero,
+Draw raw detections anyway.
+Bounding boxes must never disappear because tracking failed.
+Dashboard Rule
+The dashboard improvements must remain.
+Do not remove:
+Tracking Panel
+Performance Panel
+Detection Panel
+Scrolling
+Responsive Layout
+Keep all UI improvements.
+Only restore detection.
+Regression Protection
+From now on,
+before modifying any module,
+automatically verify:
+Camera
+Detection
+Tracking
+Recording
+Screenshot
+CSV
+JSON
+Dashboard
+Settings
+UI
+If a new change breaks an existing feature,
+automatically restore the previous working implementation.
+Never replace working code without verification.
+Automatic Regression Test
+Before completing the task run:
+RGB Detection
+Thermal Detection
+Camera Switching
+Detection ON/OFF
+Bounding Box Drawing
+Tracking
+Recording
+Screenshot
+CSV Export
+JSON Export
+Dashboard
+All must pass.
+If detection worked before but not after a modification,
+automatically revert only the faulty change while keeping the new UI improvements.
+Deliverables
+Restore object detection.
+Keep all dashboard improvements.
+Keep tracking panel.
+Keep scrolling fixes.
+Do not reduce FPS.
+Do not modify ONNX Runtime.
+Generate:
+REGRESSION_REPORT.md
+This report must contain:
+Which files were modified.
+Which change caused detection to stop.
+How it was fixed.
+Which existing features were verified after the fix.
+Confirmation that all previously working functionality still works.
