@@ -111,6 +111,8 @@ class MainWindow(ctk.CTk):
         # Wire BackendManager into ControlPanel after UI is ready
         self.after(300, lambda: self._control_panel.set_backend_manager(
             self._backend_manager))
+        # Startup UI self-test — runs after all widgets settle
+        self.after(500, self._run_ui_selftest)
         logger.info("Main window ready.")
 
     # ── Services ──────────────────────────────────────────────────────────────
@@ -138,8 +140,8 @@ class MainWindow(ctk.CTk):
         self._model_manager = ModelManager(model_dir="models")
         self._detector: Detector | None = None
 
-        self._rgb_tracker     = ByteTracker(max_age=0, iou_threshold=0.35)
-        self._thermal_tracker = ByteTracker(max_age=0, iou_threshold=0.35)
+        self._rgb_tracker     = ByteTracker(max_age=5, iou_threshold=0.35)
+        self._thermal_tracker = ByteTracker(max_age=5, iou_threshold=0.35)
 
         self._screenshot_util = ScreenshotUtil(
             output_dir=s.get("screenshots", "output_dir", "screenshots"))
@@ -554,14 +556,29 @@ class MainWindow(ctk.CTk):
         else:
             cap_fps = self._frozen_cap_fps
 
+        # Collect tracking stats from the active tracker
+        tracker = (self._rgb_tracker if mode == "rgb"
+                   else self._thermal_tracker)
+        trk_stats = tracker.get_stats()
+        # Build compact track-ID string for the Detection panel
+        active_result = (self._rgb_draw_result if mode == "rgb"
+                         else self._thermal_draw_result)
+        if active_result and active_result.track_ids:
+            ids_str = ", ".join(
+                f"#{tid}" for tid in active_result.track_ids[:8])
+            if len(active_result.track_ids) > 8:
+                ids_str += " …"
+        else:
+            ids_str = "—"
+
         self._control_panel.update_stats(
             fps_inf=fps_inf,
             avg_fps=avg_fps,
             cap_fps=cap_fps,
             display_fps=self._display_fps,
             inf_ms=self._last_inf_ms,
-            preprocess_ms=det.preprocess_ms  if det else 0.0,
-            infer_ms=det.infer_ms            if det else 0.0,
+            preprocess_ms=det.preprocess_ms   if det else 0.0,
+            infer_ms=det.infer_ms             if det else 0.0,
             postprocess_ms=det.postprocess_ms if det else 0.0,
             active_threads=det.active_threads if det else 0,
             queue_size=det.queue_size         if det else 0,
@@ -569,6 +586,14 @@ class MainWindow(ctk.CTk):
             active_dets=active_det,
             session_total=self._session_detection_count,
             camera_mode=mode,
+            trk_active=trk_stats["active_tracks"],
+            trk_lost=trk_stats["lost_tracks"],
+            trk_recovered=trk_stats["recovered_total"],
+            trk_new=trk_stats["new_total"],
+            trk_avg_age=trk_stats["avg_age_sec"],
+            trk_fps=trk_stats["tracking_fps"],
+            trk_latency=trk_stats["latency_ms"],
+            trk_ids=ids_str,
         )
 
         # Flush detection log
@@ -846,6 +871,22 @@ class MainWindow(ctk.CTk):
             connected = status == StreamStatus.CONNECTED
             panel     = self._rgb_panel if mode == "rgb" else self._thermal_panel
             self.after(0, panel.set_status, connected, status.value)
+
+    def _run_ui_selftest(self):
+        """Startup UI self-test — called once after all widgets settle."""
+        try:
+            from utils.ui_self_test import run_ui_selftest
+            result = run_ui_selftest(self)
+            if result.ok:
+                logger.info(
+                    f"UI self-test PASSED — "
+                    f"{result.passed} checks OK  (see logs/ui_check.log)")
+            else:
+                logger.warning(
+                    f"UI self-test: {result.failed} FAILED, "
+                    f"{result.passed} passed  (see logs/ui_check.log)")
+        except Exception:
+            logger.warning("UI self-test could not run (non-fatal).")
 
     def _setup_shortcuts(self):
         self.bind("<space>",     lambda e: self._on_pause() if self._detecting else None)

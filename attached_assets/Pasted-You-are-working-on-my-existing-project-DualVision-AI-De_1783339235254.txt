@@ -1,0 +1,186 @@
+You are working on my existing project:
+DualVision AI Detector v1.3 Stable FPS FIX 
+Do NOT create a new project.
+Continue development from the current stable version.
+Do NOT redesign the application.
+Do NOT modify the working ONNX Runtime detection pipeline.
+Do NOT reduce performance.
+OBJECTIVE
+Implement professional object tracking and completely verify the UI so that no information is hidden or clipped.
+PART 1 – Stable Object Tracking
+Implement object tracking using ByteTrack.
+Requirements:
+Every detected object receives a persistent ID.
+The same object should keep the same ID across frames.
+IDs should not randomly change every frame.
+Handle temporary occlusion correctly.
+Handle object leaving and re-entering the frame.
+Draw:
+Class Name
+Confidence
+Tracking ID
+Example:
+Person 0.91 ID:7
+Chair 0.95 ID:12
+Bottle 0.88 ID:18
+Tracking must work only on the active camera.
+PART 2 – Tracking Statistics
+Display:
+Active Tracks
+Lost Tracks
+Recovered Tracks
+New Tracks
+Average Track Age
+Tracking FPS
+Tracking Latency
+PART 3 – Detection Panel Fix
+The bottom-right Detection panel appears clipped.
+It currently shows:
+Active Dets
+Session Total
+However I suspect more information exists below but is hidden.
+Investigate the entire panel.
+Requirements:
+Nothing should be hidden.
+Every widget must be visible.
+Fix scrolling if required.
+If scrolling is not appropriate, automatically resize the panel.
+No text should be cut off.
+No controls should be outside the visible area.
+The complete Detection section must always be readable.
+PART 4 – Bottom Status Area
+I also noticed a clock/time displayed at the bottom.
+Verify whether anything exists below or beside the clock that is currently hidden.
+Requirements:
+Inspect the entire UI.
+Ensure nothing is outside the visible area.
+Automatically adjust layout if required.
+Verify all labels, counters and status indicators remain visible on common resolutions.
+PART 5 – UI Layout Validation
+Automatically validate the complete interface.
+Check:
+Top Toolbar
+Camera Window
+Right Dashboard
+Bottom Status Bar
+Detection Panel
+Settings Window
+About Window
+CSV
+JSON
+Recording
+No widget may overlap another widget.
+No widget may disappear.
+No widget may be clipped.
+No hidden controls.
+No hidden text.
+No hidden graphs.
+PART 6 – Responsive Layout
+Support:
+1920×1080
+1600×900
+1536×864
+1366×768
+Resize gracefully.
+Panels should automatically adjust.
+PART 7 – Generate UI Inventory
+Generate a file:
+UI_COMPONENT_LIST.md
+This file must contain every UI component implemented in the software.
+Example format:
+Main Window
+Start Button
+Stop Button
+Pause Button
+Screenshot Button
+Record Button
+Settings Button
+CSV Button
+JSON Button
+About Button
+Exit Button
+RGB Camera Window
+Thermal Camera Window
+Camera Selector
+...
+Dashboard
+Backend
+Provider
+Model
+Device
+Inference FPS
+Average FPS
+Capture FPS
+Display FPS
+CPU Usage
+RAM Usage
+Inference Time
+Tracking FPS
+...
+Detection
+Active Detections
+Session Total
+Current Objects
+Tracking IDs
+...
+Status Bar
+Current FPS
+Model
+Backend
+Camera
+Detection Status
+Recording Status
+Connection Status
+Clock
+...
+Every visible UI item must be listed.
+Do not omit anything.
+PART 8 – Runtime Verification
+Generate another file:
+UI_VERIFICATION_CHECKLIST.md
+The checklist should allow me to manually verify the application.
+Example:
+☐ Start button works
+☐ Stop button works
+☐ Pause button works
+☐ RGB camera works
+☐ Thermal camera works
+☐ Camera switching works
+☐ Detection works
+☐ Tracking works
+☐ Active Detection counter updates
+☐ Session Total updates
+☐ CPU Usage updates
+☐ RAM Usage updates
+☐ Backend displayed
+☐ Provider displayed
+☐ Model displayed
+☐ Clock updates
+☐ Status bar visible
+☐ Detection panel fully visible
+☐ No clipped controls
+☐ No hidden widgets
+☐ Recording works
+☐ Screenshot works
+☐ CSV Export works
+☐ JSON Export works
+Continue until every UI element is covered.
+PART 9 – Startup Self-Test
+On startup automatically verify:
+All UI widgets created successfully
+All panels visible
+All counters updating
+No hidden controls
+No layout errors
+Log results into:
+logs/ui_check.log
+FINAL REQUIREMENT
+Do NOT add experimental features.
+Do NOT modify the stable detection pipeline.
+Do NOT modify ONNX Runtime.
+Only:
+Add stable object tracking.
+Fix hidden UI elements.
+Generate complete UI inventory.
+Generate verification checklist.
+Ensure every implemented feature is actually visible and accessible.
