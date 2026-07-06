@@ -30,3 +30,9 @@ id = "8gqWMbfhjmw7eE796B-m1"
 uri = "file://DualVisionAI_v1.3_CPUEdition.tar.gz"
 type = "unspecified"
 title = "DualVision AI — v1.3 CPU Edition (objectness fix + diagnostics)"
+
+[[outputs]]
+id = "oNQfy3rGh233a4VJ0R1lk"
+uri = "file://DualVisionAI_v1.3_FPSFix.tar.gz"
+type = "unspecified"
+title = "DualVisionAI v1.3 — FPS Fix Edition"
