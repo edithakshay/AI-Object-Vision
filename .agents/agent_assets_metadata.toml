@@ -36,3 +36,9 @@ id = "oNQfy3rGh233a4VJ0R1lk"
 uri = "file://DualVisionAI_v1.3_FPSFix.tar.gz"
 type = "unspecified"
 title = "DualVisionAI v1.3 — FPS Fix Edition"
+
+[[outputs]]
+id = "mJkYVsv32wuwymtwASDAu"
+uri = "file://DualVisionAI_v1.3_Tracking.tar.gz"
+type = "unspecified"
+title = "DualVisionAI_v1.3_Tracking.tar.gz"
