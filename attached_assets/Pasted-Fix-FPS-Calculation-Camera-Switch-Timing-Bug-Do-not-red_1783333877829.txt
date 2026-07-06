@@ -1,0 +1,104 @@
+Fix FPS Calculation & Camera Switch Timing Bug
+Do not redesign the UI.
+Do not change the detection pipeline.
+Do not optimize AI models.
+The application already detects objects correctly.
+The only issue is incorrect FPS reporting after camera switching.
+Current Bug
+Observed behavior:
+RGB + Detection ON → FPS shows around 7–10.
+Switch to Thermal → FPS becomes around 19–20.
+Switch back to RGB → FPS incorrectly remains around 19–20.
+Stop Detection → Start Detection again → RGB FPS drops back to 7–10.
+This indicates the FPS calculation is incorrect or stale after camera switching.
+Required Fixes
+1. Separate FPS Counters
+Maintain completely independent FPS counters:
+Capture FPS
+Decode FPS
+Inference FPS
+Display FPS
+Overall UI FPS
+Never reuse one counter for another.
+2. Reset Timers
+Whenever:
+Camera changes
+Detection starts
+Detection stops
+Stream reconnects
+Reset:
+FPS timers
+Moving averages
+Frame counters
+Previous timestamps
+Queue statistics
+Do not keep old values.
+3. Correct Dashboard Labels
+Display clearly:
+Capture FPS
+Inference FPS
+Display FPS
+Overall FPS
+Never show Capture FPS as Inference FPS.
+4. Verify Camera Switch
+When switching RGB ↔ Thermal:
+Stop old camera.
+Clear all frame queues.
+Reset timing.
+Start new timing.
+Start FPS counters from zero.
+5. Detection Toggle
+When Start Detection is pressed:
+Reset:
+Inference timer
+Average FPS
+Detection counter
+Processing timer
+When Stop Detection is pressed:
+Freeze values.
+Do not continue updating FPS.
+6. Logging
+Create:
+logs/fps_debug.log
+Every second print:
+Capture FPS
+Inference FPS
+Display FPS
+Current Camera
+Detection Enabled
+Queue Length
+Inference Time
+7. Validation
+Verify:
+Scenario 1
+RGB
+↓
+Detection ON
+↓
+Correct FPS
+Scenario 2
+RGB
+↓
+Thermal
+↓
+Correct FPS
+Scenario 3
+Thermal
+↓
+RGB
+↓
+Correct FPS
+Scenario 4
+RGB
+↓
+Detection OFF
+↓
+Detection ON
+↓
+Correct FPS
+FPS values must remain consistent.
+8. Acceptance Criteria
+The dashboard must always show real values.
+Switching cameras must never increase FPS artificially.
+Restarting detection must never change FPS calculations incorrectly.
+The displayed FPS must match the actual processing speed.

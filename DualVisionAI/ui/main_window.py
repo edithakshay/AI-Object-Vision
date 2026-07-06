@@ -296,6 +296,7 @@ class MainWindow(ctk.CTk):
 
         if was_detecting and self._detector:
             self._detector.clear_results()
+            self._detector.reset_fps()   # prevent stale FPS from old stream
             self._detector.resume()
 
         self._switching = False
@@ -598,6 +599,7 @@ class MainWindow(ctk.CTk):
                         pass
 
                 self._detector = detector
+                self._detector.reset_fps()   # clean slate on every Start
                 self._rgb_tracker.reset()
                 self._thermal_tracker.reset()
                 self._rgb_draw_result      = None
@@ -636,6 +638,7 @@ class MainWindow(ctk.CTk):
         if self._detector:
             self._detector.stop()
             self._detector.clear_results()
+            self._detector.reset_fps()   # freeze dashboard at zero on Stop
         self._rgb_tracker.reset()
         self._thermal_tracker.reset()
         self._rgb_draw_result      = None

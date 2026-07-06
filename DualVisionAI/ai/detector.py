@@ -126,8 +126,8 @@ class Detector:
 
         self._fps_history: list[float] = []
 
-        # Pre-allocated input buffer for memory reuse (NCHW float32)
-        self._blob: np.ndarray | None = None
+        # Per-thread input buffers to prevent race between RGB and Thermal threads
+        self._blobs: dict[str, np.ndarray | None] = {"rgb": None, "thermal": None}
 
         # Inference log interval
         self._inf_log_counter = 0
@@ -270,6 +270,15 @@ class Detector:
             self._rgb_result     = None
             self._thermal_result = None
 
+    def reset_fps(self):
+        """Reset all FPS counters and history — call on camera switch / start / stop."""
+        self.fps_inference = 0.0
+        self.fps_rgb       = 0.0
+        self.fps_thermal   = 0.0
+        self.avg_fps       = 0.0
+        self._fps_history.clear()
+        inf_logger.info("FPS counters reset.")
+
     # ── Parameters ────────────────────────────────────────────────────────────
     def update_params(self, conf=None, iou=None, frame_skip=None,
                       input_size=None):
@@ -279,7 +288,8 @@ class Detector:
         if input_size  is not None:
             if input_size != self.input_size:
                 self.input_size = input_size
-                self._blob = None   # force re-allocate
+                # Clear per-stream buffers so they are re-allocated at new size
+                self._blobs = {"rgb": None, "thermal": None}
 
     # ── Properties ────────────────────────────────────────────────────────────
     @property
@@ -324,7 +334,7 @@ class Detector:
             skip = 0
 
             try:
-                res = self._infer(frame)
+                res = self._infer(frame, stream)
             except Exception:
                 tb = traceback.format_exc()
                 logger.error(f"[{stream}] Inference error:\n{tb}")
@@ -343,7 +353,7 @@ class Detector:
             self.infer_ms       = (1-a)*self.infer_ms       + a*res.inference_ms
             self.postprocess_ms = (1-a)*self.postprocess_ms + a*res.postprocess_ms
 
-            # FPS
+            # FPS — each stream tracks its own counter independently
             inf_n += 1
             now   = time.time()
             if now - t0 >= 1.0:
@@ -352,7 +362,9 @@ class Detector:
                     self.fps_rgb = fps
                 else:
                     self.fps_thermal = fps
-                self.fps_inference = (self.fps_rgb + self.fps_thermal) / 2
+                # fps_inference = active stream FPS (not averaged — avoids
+                # stale inactive-stream FPS contaminating the dashboard)
+                self.fps_inference = fps
                 self._fps_history.append(fps)
                 if len(self._fps_history) > 15:
                     self._fps_history.pop(0)
@@ -372,7 +384,7 @@ class Detector:
                     f"dets={len(res.boxes)}")
 
     # ── ONNX CPU Inference ────────────────────────────────────────────────────
-    def _infer(self, frame) -> DetectionResult:
+    def _infer(self, frame, stream: str = "rgb") -> DetectionResult:
         res    = DetectionResult()
         h0, w0 = frame.shape[:2]
         sz     = self.input_size
@@ -383,15 +395,17 @@ class Detector:
         small = cv2.resize(frame, (sz, sz), interpolation=cv2.INTER_LINEAR)
         rgb   = small[:, :, ::-1]   # BGR → RGB in-place view (no copy)
 
-        # Reuse buffer if shape unchanged
-        if self._blob is None or self._blob.shape != (1, 3, sz, sz):
-            self._blob = np.empty((1, 3, sz, sz), dtype=np.float32)
+        # Reuse per-stream buffer — prevents race between RGB and Thermal threads
+        blob = self._blobs.get(stream)
+        if blob is None or blob.shape != (1, 3, sz, sz):
+            blob = np.empty((1, 3, sz, sz), dtype=np.float32)
+            self._blobs[stream] = blob
 
         # Fill buffer: HWC → NCHW /255
         np.divide(
             rgb.transpose(2, 0, 1).astype(np.float32),
             255.0,
-            out=self._blob[0])
+            out=blob[0])
 
         res.preprocess_ms = (time.perf_counter() - t_pre) * 1000.0
 
@@ -400,22 +414,22 @@ class Detector:
             try:
                 import os
                 os.makedirs("debug", exist_ok=True)
-                dbg = (self._blob[0].transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
+                dbg = (blob[0].transpose(1, 2, 0) * 255).astype(np.uint8)[:, :, ::-1]
                 cv2.imwrite("debug/preprocessed.png", dbg)
                 inf_logger.info(
                     f"STEP 2 — Saved debug/preprocessed.png  "
                     f"frame_shape={frame.shape}  "
-                    f"blob_shape={self._blob.shape}  "
-                    f"blob_dtype={self._blob.dtype}  "
-                    f"blob_min={self._blob.min():.4f}  "
-                    f"blob_max={self._blob.max():.4f}")
+                    f"blob_shape={blob.shape}  "
+                    f"blob_dtype={blob.dtype}  "
+                    f"blob_min={blob.min():.4f}  "
+                    f"blob_max={blob.max():.4f}")
                 self._debug_img_saved = True
             except Exception as _de:
                 logger.warning(f"Debug image save failed (non-fatal): {_de}")
 
         # ── ONNX inference ────────────────────────────────────────────────────
         t_inf   = time.perf_counter()
-        outputs = self._session.run(None, {self._input_name: self._blob})
+        outputs = self._session.run(None, {self._input_name: blob})
         res.timestamp    = time.time()
         res.inference_ms = (time.perf_counter() - t_inf) * 1000.0
 
@@ -487,29 +501,58 @@ class Detector:
                 f"  pred_shape=({n_anchors}, {n_ch})  "
                 f"mid_row_first10={[round(v,4) for v in sample_row]}")
 
-        # ── Format C: objectness present — channels = 4 + 1 + n_cls ────────
-        # Exact match: n_ch == n_classes + 5  (85 for COCO-80)
+        # ── Determine known class count from model metadata ──────────────────
+        # Using exact class count eliminates Format B/C ambiguity:
+        #   Format C: n_ch == n_cls + 5  (YOLOv5/YOLO26 with objectness)
+        #   Format B: n_ch == n_cls + 4  (YOLOv8/v11 without objectness)
+        # Both have sigmoid-range values in all columns — value-range
+        # heuristics alone cannot reliably distinguish them.
+        known_n_cls = len(self._class_names) if self._class_names else 0
+
+        # ── Format C (exact): objectness present — n_ch == n_cls + 5 ────────
+        if known_n_cls > 0 and n_ch == known_n_cls + 5:
+            if do_diag:
+                inf_logger.info(
+                    f"  → FORMAT C (exact match, known n_cls={known_n_cls})  "
+                    f"n_ch={n_ch}")
+            self._decode_v5_format(pred, known_n_cls, res, w0, h0, sz, do_diag)
+            return
+
+        # ── Format B (exact): no objectness — n_ch == n_cls + 4 ─────────────
+        if known_n_cls > 0 and n_ch == known_n_cls + 4:
+            if do_diag:
+                inf_logger.info(
+                    f"  → FORMAT B (exact match, known n_cls={known_n_cls})  "
+                    f"n_ch={n_ch}")
+            self._decode_v8_format(pred, known_n_cls, res, w0, h0, sz, do_diag)
+            return
+
+        # ── Fallback heuristic when class count unknown ───────────────────────
+        # Try Format C first (objectness col4); confirm by checking col4 mean is
+        # low (most anchors have near-zero objectness for typical images).
         n_cls_c = n_ch - 5
         if n_cls_c > 0:
             obj_col = pred[:, 4].astype(np.float32)
-            # Objectness is sigmoid-activated → values genuinely in [0, 1].
-            # If that column is truly objectness, its maximum will be ≤ 1.
-            if obj_col.max() <= 1.01:
+            # Objectness differs from class scores: the mean is very low
+            # (typically < 0.05) because only a tiny fraction of anchors fire.
+            # Class scores averaged over all anchors are also low, but the
+            # mean·max product diverges — use mean < 0.1 as the guard.
+            if obj_col.max() <= 1.01 and obj_col.mean() < 0.1:
                 if do_diag:
                     inf_logger.info(
-                        f"  → FORMAT C detected (objectness col4)  "
+                        f"  → FORMAT C (heuristic, unknown n_cls)  "
                         f"n_cls={n_cls_c}  "
                         f"obj_max={obj_col.max():.4f}  "
                         f"obj_mean={obj_col.mean():.6f}")
                 self._decode_v5_format(pred, n_cls_c, res, w0, h0, sz, do_diag)
                 return
 
-        # ── Format B: no objectness — channels = 4 + n_cls ──────────────────
+        # ── Format B fallback: no objectness — channels = 4 + n_cls ─────────
         n_cls_b = n_ch - 4
         if n_cls_b > 0:
             if do_diag:
                 inf_logger.info(
-                    f"  → FORMAT B detected (no objectness)  n_cls={n_cls_b}")
+                    f"  → FORMAT B (fallback)  n_cls={n_cls_b}")
             self._decode_v8_format(pred, n_cls_b, res, w0, h0, sz, do_diag)
             return
 

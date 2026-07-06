@@ -216,6 +216,20 @@ Output: `dist\DualVisionAI\DualVisionAI.exe`
 
 ## Changelog
 
+### v1.3.0 — Stable CPU Edition (current master)
+
+- **Single Active Camera Mode** — only one RTSP stream runs at a time (RGB or Thermal); the inactive stream consumes 0 CPU, 0 RAM, 0 threads
+- **Camera selector** in control panel — radio buttons for RGB / Thermal with instant, no-restart switching
+- **Zero-resource inactive camera** — all threads, queues, and OpenCV buffers for the inactive camera are fully released on switch
+- **Fixed FPS calculation** after camera switching — independent per-stream FPS counters reset correctly on every switch, start, and stop
+- **Separate FPS counters** — Infer FPS, Avg FPS, Capture FPS each tracked independently
+- **BackendManager** — centralised CPU backend with ORT thread optimisation, startup diagnostics, and `logs/startup.log`
+- **New logging system** — four log files: `debug.log`, `startup.log`, `inference.log`, `camera.log`
+- **ONNX output auto-detection** — Format A (NMS-included), Format B (YOLOv8/v11), Format C (YOLOv5/YOLO26 with objectness) — fixes bounding box class shift bug
+- **Diagnostic tool** — `tools/diagnose_model.py` for ONNX vs PyTorch comparison
+- **`app_logger.py`** — centralized multi-file logging with prefix filters
+- This version is the **stable production foundation** for all future development (v1.4 GPU/CUDA)
+
 ### v1.1.0 — YOLO26 Migration
 - **Removed** YOLOv8 and YOLO11 completely (models, code, imports, configs)
 - **Added** YOLO26 as the sole detection engine

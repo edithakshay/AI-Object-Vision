@@ -277,12 +277,19 @@ class ControlPanel(ctk.CTkFrame):
 
     # ── Background system monitor ─────────────────────────────────────────────
     def _system_monitor(self):
+        """Background thread — must NOT call StringVar.set() directly;
+        dispatch via after() to stay on the Tk main thread."""
         while True:
             try:
                 cpu = psutil.cpu_percent(interval=1)
                 ram = psutil.virtual_memory().used // (1024 * 1024)
-                self._cpu_var.set(f"{cpu:.0f}%")
-                self._ram_var.set(f"{ram} MB")
+                cpu_str = f"{cpu:.0f}%"
+                ram_str = f"{ram} MB"
+                try:
+                    self.after(0, self._cpu_var.set, cpu_str)
+                    self.after(0, self._ram_var.set, ram_str)
+                except Exception:
+                    pass   # widget may have been destroyed
             except Exception:
                 pass
             time.sleep(2)

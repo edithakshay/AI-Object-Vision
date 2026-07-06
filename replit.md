@@ -1,45 +1,41 @@
-# [Project name]
+# DualVision AI Detector — v1.3 Stable CPU Edition
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+## Project overview
+Windows desktop application for real-time AI object detection from dual RTSP camera streams (RGB + Thermal). Built with Python 3.12, CustomTkinter, OpenCV, and YOLO26 via ONNX Runtime.
 
-## Run & Operate
+This project lives entirely in the `DualVisionAI/` subdirectory. It is designed to be **opened in VS Code on Windows** and run manually — it is a desktop GUI app (Tkinter) and cannot display visually in Replit's browser preview.
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+## How to run (in VS Code on Windows)
+1. Open the `DualVisionAI/` folder in VS Code
+2. Create a virtual environment: `python -m venv venv`
+3. Activate: `venv\Scripts\activate`
+4. Install deps: `pip install -r requirements.txt`
+5. First-time setup (downloads YOLO26n model ~6 MB): `python setup.py`
+6. Run: `python main.py`
 
-## Stack
+VS Code launch configurations are in `.vscode/launch.json`.
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+## Architecture
+- `main.py` — entry point, splash screen
+- `ai/detector.py` — ONNX Runtime CPU inference engine, threaded
+- `ai/backend_manager.py` — CPU backend config, ORT thread tuning
+- `ai/model_manager.py` — YOLO26n .pt download + .onnx export
+- `ai/tasks.py` — task registry (Detection active; Seg/Pose/OBB stubs)
+- `camera/stream.py` — RTSP capture with auto-reconnect
+- `tracking/tracker.py` — lightweight IoU ByteTracker
+- `ui/main_window.py` — main window, single-camera mode logic
+- `ui/control_panel.py` — right panel: camera selector, backend info, stats
+- `ui/settings_dialog.py` — 3-tab settings (General / ONNX-CPU / Dashboard)
+- `config/settings.py` — JSON config manager
+- `tools/diagnose_model.py` — ONNX vs PyTorch diagnostic tool
 
-## Where things live
-
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
-
-## Architecture decisions
-
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+## Key design rules
+- **Single Active Camera** — only one RTSP stream runs at a time; inactive stream = 0 CPU/RAM
+- **ONNX Runtime CPUExecutionProvider only** — no GPU, no CUDA, no PyTorch at inference time
+- **Fixed model**: YOLO26n → yolo26n.onnx
+- **No silent failures** — all exceptions logged with full traceback and shown in UI popups
 
 ## User preferences
-
-_Populate as you build — explicit user instructions worth remembering across sessions._
-
-## Gotchas
-
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Deliver a ready-to-run folder for VS Code (Windows); do not attempt to run it on Replit server
+- Continue development from the v1.3 Stable CPU Edition as the master branch
+- v1.4 will add GPU/CUDA — do not add GPU code to this branch
