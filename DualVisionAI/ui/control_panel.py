@@ -100,6 +100,7 @@ class ControlPanel(ctk.CTkFrame):
         self._fps_var       = ctk.StringVar(value="0.0")
         self._avg_fps_var   = ctk.StringVar(value="0.0")
         self._cap_fps_var   = ctk.StringVar(value="0.0")
+        self._disp_fps_var  = ctk.StringVar(value="0.0")
         self._inf_ms_var    = ctk.StringVar(value="0 ms")
         self._pre_ms_var    = ctk.StringVar(value="0 ms")
         self._infer_ms_var  = ctk.StringVar(value="0 ms")
@@ -110,6 +111,7 @@ class ControlPanel(ctk.CTkFrame):
         self._stat_row(perf_frame, "Infer FPS",   self._fps_var,       "#22C55E")
         self._stat_row(perf_frame, "Avg FPS",     self._avg_fps_var,   "#16A34A")
         self._stat_row(perf_frame, "Capture FPS", self._cap_fps_var,   "#3B82F6")
+        self._stat_row(perf_frame, "Display FPS", self._disp_fps_var,  "#818CF8")
         self._stat_row(perf_frame, "Total ms",    self._inf_ms_var,    "#F59E0B")
         self._stat_row(perf_frame, "Preprocess",  self._pre_ms_var,    "#64748B")
         self._stat_row(perf_frame, "Infer ms",    self._infer_ms_var,  "#F59E0B")
@@ -221,6 +223,7 @@ class ControlPanel(ctk.CTkFrame):
         fps_inf:      float = 0.0,
         avg_fps:      float = 0.0,
         cap_fps:      float = 0.0,
+        display_fps:  float = 0.0,
         inf_ms:       float = 0.0,
         preprocess_ms:  float = 0.0,
         infer_ms:       float = 0.0,
@@ -235,6 +238,7 @@ class ControlPanel(ctk.CTkFrame):
         self._fps_var.set(f"{fps_inf:.1f}")
         self._avg_fps_var.set(f"{avg_fps:.1f}")
         self._cap_fps_var.set(f"{cap_fps:.1f}")
+        self._disp_fps_var.set(f"{display_fps:.1f}")
         self._inf_ms_var.set(f"{inf_ms:.0f} ms")
         self._pre_ms_var.set(f"{preprocess_ms:.1f} ms")
         self._infer_ms_var.set(f"{infer_ms:.1f} ms")

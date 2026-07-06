@@ -34,6 +34,11 @@ VS Code launch configurations are in `.vscode/launch.json`.
 - **ONNX Runtime CPUExecutionProvider only** — no GPU, no CUDA, no PyTorch at inference time
 - **Fixed model**: YOLO26n → yolo26n.onnx
 - **No silent failures** — all exceptions logged with full traceback and shown in UI popups
+- **Four independent FPS counters** — Capture, Inference, Avg, Display; never mixed
+  - Reset on: Start detection, camera switch, stream reconnect
+  - Freeze (not zero) on: Stop detection — last live values remain on dashboard
+- **Per-stream FPS reset events** — `Detector._fps_reset_events["rgb"/"thermal"]` so neither inference thread can miss a reset by racing with the other
+- **`logs/fps_debug.log`** — background thread writes one line per second: cam, det, cap_fps, infer_fps, display_fps, inf_ms, queue
 
 ## User preferences
 - Deliver a ready-to-run folder for VS Code (Windows); do not attempt to run it on Replit server

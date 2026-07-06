@@ -7,7 +7,11 @@ Rules enforced here:
   • ONNX Runtime CPUExecutionProvider — no GPU, no CUDA, no PyTorch inference.
   • Fixed model: YOLO26n → yolo26n.onnx.
   • Frame queue size = 1 on the capture side; detector queue = 1 internally.
-  • Full logging to logs/startup.log, inference.log, camera.log, debug.log.
+  • Full logging to logs/startup.log, inference.log, camera.log, debug.log,
+    fps_debug.log (per-second FPS diagnostics).
+  • FPS counters are fully independent: Capture, Inference, Display, Avg.
+  • FPS resets on: Start, camera switch, stream reconnect.
+  • FPS freezes (not zeroed) on Stop — last live values remain visible.
   • No silent failure — popups show exact error messages.
 """
 
@@ -39,7 +43,8 @@ from ui.control_panel import ControlPanel
 from ui.settings_dialog import SettingsDialog
 from ui.about_dialog import AboutDialog
 
-logger = logging.getLogger("DualVisionAI.mainwindow")
+logger    = logging.getLogger("DualVisionAI.mainwindow")
+fps_logger = logging.getLogger("DualVisionAI.fps")
 
 VERSION  = "1.3"
 EDITION  = "Stable CPU Edition"
@@ -78,6 +83,14 @@ class MainWindow(ctk.CTk):
         self._pending_log: list[tuple] = []
         self._log_lock = threading.Lock()
 
+        # ── Display FPS (independent of inference FPS) ────────────────────────
+        self._display_frame_count = 0
+        self._display_fps_timer   = time.time()
+        self._display_fps         = 0.0
+
+        # ── Frozen Capture FPS — snapshot taken at Stop; shown while stopped ──
+        self._frozen_cap_fps = 0.0
+
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
@@ -93,6 +106,7 @@ class MainWindow(ctk.CTk):
         self._start_worker()
         self._start_ui_tick()
         self._setup_shortcuts()
+        self._start_fps_debug_thread()
 
         # Wire BackendManager into ControlPanel after UI is ready
         self.after(300, lambda: self._control_panel.set_backend_manager(
@@ -118,6 +132,8 @@ class MainWindow(ctk.CTk):
         )
         self._rgb_stream.set_status_callback(self._on_stream_status)
         self._thermal_stream.set_status_callback(self._on_stream_status)
+        self._rgb_stream.set_reconnect_callback(self._on_stream_reconnect)
+        self._thermal_stream.set_reconnect_callback(self._on_stream_reconnect)
 
         self._model_manager = ModelManager(model_dir="models")
         self._detector: Detector | None = None
@@ -280,6 +296,7 @@ class MainWindow(ctk.CTk):
                 timeout=s.get("rtsp", "timeout", 10),
             )
             self._rgb_stream.set_status_callback(self._on_stream_status)
+            self._rgb_stream.set_reconnect_callback(self._on_stream_reconnect)
             self._rgb_stream.start()
             logger.info("RGB stream started after camera switch.")
         else:
@@ -291,12 +308,17 @@ class MainWindow(ctk.CTk):
                 timeout=s.get("rtsp", "timeout", 10),
             )
             self._thermal_stream.set_status_callback(self._on_stream_status)
+            self._thermal_stream.set_reconnect_callback(self._on_stream_reconnect)
             self._thermal_stream.start()
             logger.info("Thermal stream started after camera switch.")
 
         if was_detecting and self._detector:
             self._detector.clear_results()
-            self._detector.reset_fps()   # prevent stale FPS from old stream
+            self._detector.reset_fps()        # prevent stale FPS from old stream
+            self._display_frame_count = 0     # reset display FPS window too
+            self._display_fps_timer   = time.time()
+            self._display_fps         = 0.0
+            self._frozen_cap_fps      = 0.0   # clear frozen snapshot from any prior stop
             self._detector.resume()
 
         self._switching = False
@@ -315,6 +337,33 @@ class MainWindow(ctk.CTk):
             pass
 
     # ── Streams ───────────────────────────────────────────────────────────────
+    def _start_fps_debug_thread(self):
+        """Background thread — writes one line per second to fps_debug.log."""
+        def _log_loop():
+            while self._ui_running or not hasattr(self, "_ui_running"):
+                try:
+                    mode    = self._camera_mode
+                    det_on  = self._detecting
+                    det     = self._detector
+                    stream  = (self._rgb_stream if mode == "rgb"
+                               else self._thermal_stream)
+                    cap_fps = stream.fps_actual   if stream  else 0.0
+                    inf_fps = det.fps_inference   if det else 0.0
+                    inf_ms  = det.infer_ms        if det else 0.0
+                    q_size  = det.queue_size      if det else 0
+                    fps_logger.debug(
+                        f"cam={mode.upper():<7}  det={'ON' if det_on else 'OFF'}  "
+                        f"cap_fps={cap_fps:5.1f}  "
+                        f"infer_fps={inf_fps:5.1f}  "
+                        f"display_fps={self._display_fps:5.1f}  "
+                        f"inf_ms={inf_ms:6.1f}  "
+                        f"queue={q_size}")
+                except Exception:
+                    pass
+                time.sleep(1.0)
+        threading.Thread(target=_log_loop, daemon=True,
+                         name="FPS-Debug-Logger").start()
+
     def _start_streams(self):
         """Only start the active camera stream."""
         if self._camera_mode == "rgb":
@@ -475,23 +524,41 @@ class MainWindow(ctk.CTk):
         thermal_det = len(self._thermal_draw_result.boxes) if self._thermal_draw_result else 0
         active_det  = rgb_det if mode == "rgb" else thermal_det
 
-        # Update active camera panel
+        # Update active camera panel and count display frames
+        frame_shown = False
         if mode == "rgb" and rgb_frame is not None:
             self._rgb_panel.update_frame(
                 rgb_frame, self._rgb_stream.fps_actual,
                 rgb_det, self._last_inf_ms)
+            frame_shown = True
         elif mode == "thermal" and thermal_frame is not None:
             self._thermal_panel.update_frame(
                 thermal_frame, self._thermal_stream.fps_actual,
                 thermal_det, self._last_inf_ms)
+            frame_shown = True
 
-        cap_fps = (self._rgb_stream.fps_actual if mode == "rgb"
-                   else self._thermal_stream.fps_actual)
+        # Display FPS — count only while detecting; freeze when stopped
+        if frame_shown and self._detecting:
+            self._display_frame_count += 1
+            _now = time.time()
+            _elapsed = _now - self._display_fps_timer
+            if _elapsed >= 1.0:
+                self._display_fps       = self._display_frame_count / _elapsed
+                self._display_frame_count = 0
+                self._display_fps_timer = _now
+
+        # Capture FPS: live while detecting, frozen at last Stop value otherwise
+        if self._detecting:
+            cap_fps = (self._rgb_stream.fps_actual if mode == "rgb"
+                       else self._thermal_stream.fps_actual)
+        else:
+            cap_fps = self._frozen_cap_fps
 
         self._control_panel.update_stats(
             fps_inf=fps_inf,
             avg_fps=avg_fps,
             cap_fps=cap_fps,
+            display_fps=self._display_fps,
             inf_ms=self._last_inf_ms,
             preprocess_ms=det.preprocess_ms  if det else 0.0,
             infer_ms=det.infer_ms            if det else 0.0,
@@ -599,7 +666,12 @@ class MainWindow(ctk.CTk):
                         pass
 
                 self._detector = detector
-                self._detector.reset_fps()   # clean slate on every Start
+                # Full counter reset on every Start press
+                self._detector.reset_fps()
+                self._display_frame_count = 0
+                self._display_fps_timer   = time.time()
+                self._display_fps         = 0.0
+                self._frozen_cap_fps      = 0.0
                 self._rgb_tracker.reset()
                 self._thermal_tracker.reset()
                 self._rgb_draw_result      = None
@@ -633,12 +705,22 @@ class MainWindow(ctk.CTk):
                          name="ModelLoader").start()
 
     def _on_stop(self):
+        # Snapshot Capture FPS before stopping so the dashboard keeps showing
+        # the last real value instead of jumping to whatever the live stream
+        # reports after detection ends.
+        mode = self._camera_mode
+        self._frozen_cap_fps = (self._rgb_stream.fps_actual if mode == "rgb"
+                                else self._thermal_stream.fps_actual)
         self._detecting = False
         self._paused    = False
         if self._detector:
             self._detector.stop()
             self._detector.clear_results()
-            self._detector.reset_fps()   # freeze dashboard at zero on Stop
+            # Do NOT call reset_fps() here — requirement says "freeze values,
+            # do not continue updating". Inference threads are stopped so FPS
+            # values naturally freeze at their last reading.
+        # Freeze display FPS too (stop incrementing counter)
+        self._display_frame_count = 0   # prevents stale partial-window math
         self._rgb_tracker.reset()
         self._thermal_tracker.reset()
         self._rgb_draw_result      = None
@@ -742,6 +824,20 @@ class MainWindow(ctk.CTk):
 
     def _on_about(self):
         AboutDialog(self)
+
+    def _on_stream_reconnect(self, name: str):
+        """Called by RTSPStream each time it successfully (re)connects.
+        Reset inference FPS so stale pre-disconnect values don't contaminate
+        the dashboard.
+        """
+        logger.info(f"[{name}] Reconnected — resetting FPS counters.")
+        if self._detector and self._detecting:
+            self._detector.reset_fps()
+        # Reset display FPS — zero value and counter so reconnect doesn't
+        # show a stale reading until the next full 1-second window.
+        self._display_fps         = 0.0
+        self._display_frame_count = 0
+        self._display_fps_timer   = time.time()
 
     def _on_stream_status(self, name: str, status: StreamStatus):
         mode = self._camera_mode

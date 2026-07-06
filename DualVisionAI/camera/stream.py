@@ -37,13 +37,27 @@ class RTSPStream:
         self._frame_count = 0
         self._fps_timer = time.time()
         self._status_callback = None
+        self._reconnect_callback = None   # called each time stream (re)connects
 
     def set_status_callback(self, callback):
         self._status_callback = callback
 
+    def set_reconnect_callback(self, callback):
+        """Register a callable(name: str) fired on every successful (re)connect.
+        Used by MainWindow to reset FPS counters on reconnect.
+        """
+        self._reconnect_callback = callback
+
+    def reset_fps(self):
+        """Zero Capture FPS — call after camera switch or detection restart."""
+        self.fps_actual   = 0.0
+        self._frame_count = 0
+        self._fps_timer   = time.time()
+
     def start(self):
         if self._running:
             return
+        self.reset_fps()     # clean slate every time the stream starts
         self._running = True
         self._paused = False
         self._thread = threading.Thread(target=self._capture_loop,
@@ -105,7 +119,14 @@ class RTSPStream:
         if cap.isOpened():
             self._cap = cap
             self._set_status(StreamStatus.CONNECTED)
+            # Reset capture FPS so stale pre-reconnect values don't bleed in
+            self.reset_fps()
             logger.info(f"[{self.name}] Connected to {self.url}")
+            if self._reconnect_callback:
+                try:
+                    self._reconnect_callback(self.name)
+                except Exception:
+                    pass
             return True
         else:
             cap.release()

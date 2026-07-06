@@ -129,6 +129,14 @@ class Detector:
         # Per-thread input buffers to prevent race between RGB and Thermal threads
         self._blobs: dict[str, np.ndarray | None] = {"rgb": None, "thermal": None}
 
+        # Per-stream FPS reset events — set by reset_fps(); each inference
+        # loop checks its own event so neither thread can clear the other's
+        # event before it is seen.
+        self._fps_reset_events: dict[str, threading.Event] = {
+            "rgb":     threading.Event(),
+            "thermal": threading.Event(),
+        }
+
         # Inference log interval
         self._inf_log_counter = 0
         self._INF_LOG_EVERY   = 100   # log every N inferences
@@ -271,12 +279,17 @@ class Detector:
             self._thermal_result = None
 
     def reset_fps(self):
-        """Reset all FPS counters and history — call on camera switch / start / stop."""
+        """Reset all FPS counters and history — call on camera switch / start.
+        Sets _fps_reset_event so that inference loops zero their local
+        frame counters immediately (not after the next 1-second window).
+        """
         self.fps_inference = 0.0
         self.fps_rgb       = 0.0
         self.fps_thermal   = 0.0
         self.avg_fps       = 0.0
         self._fps_history.clear()
+        for ev in self._fps_reset_events.values():
+            ev.set()
         inf_logger.info("FPS counters reset.")
 
     # ── Parameters ────────────────────────────────────────────────────────────
@@ -317,6 +330,15 @@ class Detector:
         t0    = time.time()
 
         while self._running:
+            # Honour an external reset_fps() call immediately — each stream has
+            # its own event so the active thread cannot miss a reset because the
+            # inactive thread cleared the shared event first.
+            if self._fps_reset_events[stream].is_set():
+                self._fps_reset_events[stream].clear()
+                inf_n = 0
+                skip  = 0
+                t0    = time.time()
+
             if self._paused:
                 time.sleep(0.05)
                 continue

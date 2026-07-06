@@ -1,11 +1,12 @@
 """
 Centralised logging setup — DualVision AI Detector v1.3 Stable CPU Edition.
 
-Creates four log files:
-  logs/startup.log   — app startup, model loading, ONNX export
-  logs/inference.log — per-inference timings and detection counts
-  logs/camera.log    — stream connect / disconnect / reconnect events
-  logs/debug.log     — everything (DEBUG level, full verbose trace)
+Creates five log files:
+  logs/startup.log    — app startup, model loading, ONNX export
+  logs/inference.log  — per-inference timings and detection counts
+  logs/camera.log     — stream connect / disconnect / reconnect events
+  logs/fps_debug.log  — per-second FPS diagnostics (capture, infer, display)
+  logs/debug.log      — everything (DEBUG level, full verbose trace)
 
 Console output shows INFO and above.
 Exceptions are never suppressed.
@@ -56,6 +57,11 @@ def setup_logging(log_dir: str = "logs", console_level=logging.INFO) -> None:
     _add_file_handler_filtered(
         root, f"{log_dir}/camera.log", logging.INFO, fmt_simple,
         prefixes=("DualVisionAI.camera",))
+
+    # ── fps_debug.log — DEBUG+ filtered to FPS diagnostics ───────────────────
+    _add_file_handler_filtered(
+        root, f"{log_dir}/fps_debug.log", logging.DEBUG, fmt_simple,
+        prefixes=("DualVisionAI.fps",))
 
     # ── console — INFO+ ───────────────────────────────────────────────────────
     ch = logging.StreamHandler(sys.stdout)
