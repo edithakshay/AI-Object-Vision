@@ -1,0 +1,132 @@
+You are working on my existing project:
+
+Do NOT redesign the application.
+Do NOT modify the UI.
+Do NOT change the ONNX Runtime backend.
+Do NOT optimize FPS.
+The application previously performed continuous live detection correctly.
+A recent update introduced a regression.
+Restore continuous real-time detection.
+Current Bug
+When I press Start:
+The first camera frame is processed correctly.
+Bounding boxes appear.
+After that,
+the camera video continues,
+but the detections never update.
+The bounding boxes remain frozen on the first frame.
+If I press Stop and Start again,
+the first frame is detected again,
+then freezes again.
+This proves:
+Camera stream is live.
+Detection thread is not processing continuous frames.
+Required Investigation
+Trace the complete pipeline:
+Camera
+↓
+Capture Thread
+↓
+Frame Queue
+↓
+Inference Thread
+↓
+Detection Results
+↓
+Tracking
+↓
+Overlay
+↓
+Display
+Verify that every new frame reaches every stage.
+Check Capture Thread
+Verify that the capture thread continuously pushes new frames into the inference queue.
+Do not stop after the first frame.
+Log:
+Frame Number
+Timestamp
+Queue Size
+Frames Captured
+Frames Submitted
+Check Queue
+Ensure:
+Latest frame replaces old frames.
+No deadlock.
+No queue blocking.
+No queue starvation.
+The inference thread must always receive the newest frame.
+Check Inference Thread
+Verify:
+The inference loop runs continuously.
+Never exits after processing one frame.
+Never waits forever.
+Never blocks.
+Log:
+Frame ID
+Inference Count
+Inference Timestamp
+Objects Found
+Check Detection Cache
+Ensure previous detections are cleared every frame.
+Do NOT reuse old bounding boxes.
+Every frame must produce a fresh detection result.
+Check Overlay
+The overlay must always draw detections from the current frame.
+Never draw cached detections.
+Every displayed frame must have matching detections.
+Check Tracking
+Tracking must update every frame.
+Never keep previous positions when new detections exist.
+If tracking fails,
+disable tracking temporarily,
+but continue drawing live detections.
+Detection must never stop because tracking failed.
+Debug Information
+Display in logs:
+Captured Frame #
+Processed Frame #
+Displayed Frame #
+Inference #
+Tracking Update #
+Overlay Update #
+These counters must continuously increase.
+If any counter stops,
+identify why.
+Acceptance Test
+Scenario:
+Place a chair.
+Detection appears.
+Walk into the frame.
+Person must immediately be detected.
+Move left.
+Bounding box must follow.
+Move right.
+Bounding box must update.
+Remove the chair.
+Chair detection disappears.
+Bring the chair back.
+Detection returns.
+The overlay must update every frame.
+No frozen boxes.
+No cached detections.
+Regression Protection
+Before modifying any code,
+compare against the last working detection version.
+Keep:
+ONNX Runtime CPU
+YOLO26n
+Camera Switching
+Dashboard
+Tracking Panel
+UI Improvements
+Only restore continuous live detection.
+Deliverables
+Generate:
+LIVE_DETECTION_FIX_REPORT.md
+Include:
+Root cause of the freeze.
+Which module stopped updating.
+Files modified.
+Why only the first frame was processed.
+How continuous detection was restored.
+Confirmation that detection updates on every frame without restarting.

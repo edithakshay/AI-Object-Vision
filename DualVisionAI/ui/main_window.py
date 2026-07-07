@@ -464,34 +464,44 @@ class MainWindow(ctk.CTk):
                 self._thermal_draw_result = None
             return
 
+        # ── STEP 1: Pre-fill class names from raw ONNX output ────────────────
+        # This guarantees boxes always have labels, even if tracking is skipped
+        # or throws.  Tracking will OVERWRITE these if it succeeds.
+        _names = self._detector.class_names
+        result.class_names = [
+            _names[cid] if cid < len(_names) else "?"
+            for cid in result.class_ids]
+        result.track_ids = []
+
+        # ── STEP 2: Optional tracking — wrapped so exceptions NEVER prevent ──
+        # the draw result from being set.  If tracking fails, raw ONNX
+        # detections (set in STEP 1) are drawn instead.
         if enable_tracking:
-            tracker = (self._rgb_tracker if stream == "rgb"
-                       else self._thermal_tracker)
-            dets = [{"box": b, "class_id": c, "confidence": cf}
-                    for b, c, cf in zip(result.boxes, result.class_ids,
-                                        result.confidences)]
-            tracked = tracker.update(dets)
+            try:
+                tracker = (self._rgb_tracker if stream == "rgb"
+                           else self._thermal_tracker)
+                dets = [{"box": b, "class_id": c, "confidence": cf}
+                        for b, c, cf in zip(result.boxes, result.class_ids,
+                                            result.confidences)]
+                tracked = tracker.update(dets)
 
-            if tracked:
-                # Normal path — tracker returned confirmed tracks
-                result.boxes       = [t["box"]       for t in tracked]
-                result.class_ids   = [t["class_id"]  for t in tracked]
-                result.confidences = [t["confidence"] for t in tracked]
-                names = self._detector.class_names
-                result.class_names = [
-                    names[t["class_id"]] if t["class_id"] < len(names) else "?"
-                    for t in tracked]
-                result.track_ids = [t["track_id"] for t in tracked]
-            else:
-                # OVERLAY RULE: tracker returned nothing (e.g. transitional frame)
-                # → keep the raw ONNX detections so boxes are always visible.
-                # track_ids remain as-is (empty list from DetectionResult default).
-                names = self._detector.class_names
-                result.class_names = [
-                    names[cid] if cid < len(names) else "?"
-                    for cid in result.class_ids]
-                result.track_ids = []
+                if tracked:
+                    result.boxes       = [t["box"]       for t in tracked]
+                    result.class_ids   = [t["class_id"]  for t in tracked]
+                    result.confidences = [t["confidence"] for t in tracked]
+                    result.class_names = [
+                        _names[t["class_id"]] if t["class_id"] < len(_names) else "?"
+                        for t in tracked]
+                    result.track_ids   = [t["track_id"]  for t in tracked]
+                # else: tracked is empty — STEP 1 raw detections remain
+            except Exception as _trk_err:
+                # Tracking error: log once and fall back to raw detections.
+                # NEVER propagate — this block must not prevent STEP 3.
+                logger.warning(
+                    f"[{stream}] Tracking error (raw detections used): {_trk_err}")
 
+        # ── STEP 3: Set draw result — ALWAYS reached regardless of tracking ──
+        # This is the line that was previously skipped when tracking threw.
         if stream == "rgb":
             self._rgb_draw_result = result
         else:

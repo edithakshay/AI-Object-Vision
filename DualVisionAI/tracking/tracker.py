@@ -31,66 +31,115 @@ class KalmanBoxFilter:
     Constant-velocity Kalman filter for bounding-box tracking.
     State vector: [cx, cy, w, h, vx, vy, vw, vh]
     Measurement:  [cx, cy, w, h]
+
+    Stability improvements vs the original:
+      • Uses float64 throughout — float32 accumulates rounding errors that
+        can make the innovation covariance S singular within a few frames.
+      • Replaces np.linalg.inv(S) with np.linalg.solve(S.T, (P @ H.T).T).T
+        so a singular S never raises LinAlgError — it degrades gracefully.
+      • Uses the Joseph form covariance update P = (I-KH)P(I-KH)^T + KRK^T
+        which preserves positive-semidefiniteness under numerical errors.
+      • Detects NaN/Inf in state or covariance and re-initiates on-the-fly.
     """
 
+    # Internal dtype — float64 for numerical stability
+    _DT = np.float64
+
     def __init__(self):
-        dt = 1.0
+        D = self._DT
 
-        self.F = np.eye(8, dtype=np.float32)
+        self.F = np.eye(8, dtype=D)
         for i in range(4):
-            self.F[i, i + 4] = dt
+            self.F[i, i + 4] = 1.0          # constant-velocity
 
-        self.H = np.eye(4, 8, dtype=np.float32)
+        self.H = np.eye(4, 8, dtype=D)       # observation matrix
 
+        # Process noise — position more uncertain than velocity
         self.Q = np.diag([
             1.0, 1.0, 1.0, 1.0,
-            0.01, 0.01, 0.0001, 0.0001
-        ]).astype(np.float32)
+            0.01, 0.01, 0.0001, 0.0001,
+        ]).astype(D)
 
-        self.R = np.diag([
-            1.0, 1.0, 10.0, 10.0
-        ]).astype(np.float32)
+        # Measurement noise
+        self.R = np.diag([1.0, 1.0, 10.0, 10.0]).astype(D)
 
-        self.x = np.zeros((8, 1), dtype=np.float32)
-        self.P = np.eye(8, dtype=np.float32) * 10.0
+        self.x = np.zeros((8, 1), dtype=D)
+        self.P = np.eye(8, dtype=D) * 10.0
+
+        self._last_good_box: list = [0.0, 0.0, 1.0, 1.0]
+
+    # ── helpers ──────────────────────────────────────────────────────────────
 
     @staticmethod
     def _box_to_cx(box):
-        x1, y1, x2, y2 = box
+        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
         return np.array([[
             (x1 + x2) / 2.0,
             (y1 + y2) / 2.0,
-            x2 - x1,
-            y2 - y1,
-        ]], dtype=np.float32).T
+            max(x2 - x1, 1.0),
+            max(y2 - y1, 1.0),
+        ]], dtype=KalmanBoxFilter._DT).T    # shape (4, 1)
 
     @staticmethod
     def _cx_to_box(cx):
-        cx_, cy_, w, h = float(cx[0]), float(cx[1]), float(cx[2]), float(cx[3])
-        w = max(w, 1.0)
-        h = max(h, 1.0)
+        # cx may be (4,1) or (4,) — handle both
+        vals = cx.ravel()
+        cx_, cy_ = float(vals[0]), float(vals[1])
+        w,   h   = max(float(vals[2]), 1.0), max(float(vals[3]), 1.0)
         return [cx_ - w/2, cy_ - h/2, cx_ + w/2, cy_ + h/2]
 
+    def _is_healthy(self) -> bool:
+        return (np.all(np.isfinite(self.x)) and
+                np.all(np.isfinite(self.P)))
+
+    # ── public API ────────────────────────────────────────────────────────────
+
     def initiate(self, box):
+        self._last_good_box = list(box)
+        self.x[:] = 0.0
         self.x[:4] = self._box_to_cx(box)
-        self.x[4:] = 0.0
-        self.P = np.eye(8, dtype=np.float32) * 10.0
+        self.P = np.eye(8, dtype=self._DT) * 10.0
 
     def predict(self):
         self.x = self.F @ self.x
         self.P = self.F @ self.P @ self.F.T + self.Q
+        if not self._is_healthy():
+            self.initiate(self._last_good_box)
         return self._cx_to_box(self.x[:4])
 
     def update(self, box):
+        self._last_good_box = list(box)
         z = self._box_to_cx(box)
-        S = self.H @ self.P @ self.H.T + self.R
-        K = self.P @ self.H.T @ np.linalg.inv(S)
-        y = z - self.H @ self.x
+
+        # Innovation covariance: S = H P H^T + R
+        S = self.H @ self.P @ self.H.T + self.R  # (4,4)
+
+        # Kalman gain via solve — more stable than explicit inv(S).
+        # K = P H^T S^{-1}  ↔  S K^T = (P H^T)^T  →  solve for K^T
+        PH = self.P @ self.H.T                    # (8,4)
+        try:
+            K = np.linalg.solve(S.T, PH.T).T      # (8,4)
+        except np.linalg.LinAlgError:
+            # S is singular — skip this update, trust prediction
+            return
+
+        # State update
+        y = z - self.H @ self.x                   # innovation (4,1)
         self.x = self.x + K @ y
-        self.P = (np.eye(8, dtype=np.float32) - K @ self.H) @ self.P
+
+        # Joseph form: P = (I-KH)P(I-KH)^T + KRK^T — numerically stable
+        I8  = np.eye(8, dtype=self._DT)
+        IKH = I8 - K @ self.H
+        self.P = IKH @ self.P @ IKH.T + K @ self.R @ K.T
+
+        if not self._is_healthy():
+            # NaN/Inf crept in — re-initiate from the raw measurement
+            self.initiate(box)
 
     @property
     def predicted_box(self):
+        if not self._is_healthy():
+            return list(self._last_good_box)
         return self._cx_to_box(self.x[:4])
 
 
