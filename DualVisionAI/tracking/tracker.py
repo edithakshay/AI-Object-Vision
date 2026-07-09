@@ -192,6 +192,10 @@ class _Track:
         self.lost_count      = 0   # times this track went "lost"
         self.recovered_count = 0   # times this track was recovered
 
+        # EMA-smoothed confidence (more stable than instantaneous)
+        _EMA = 0.35
+        self.smooth_conf = float(confidence)
+
         # Motion
         self.velocity  = (0.0, 0.0)    # (vx, vy) pixels/frame
         self.direction = "stationary"
@@ -218,9 +222,11 @@ class _Track:
         prev_cx = (self.box[0] + self.box[2]) / 2.0
         prev_cy = (self.box[1] + self.box[3]) / 2.0
 
+        _EMA = 0.35
         self.box        = list(box)
         self.class_id   = class_id
         self.confidence = confidence
+        self.smooth_conf = _EMA * confidence + (1.0 - _EMA) * self.smooth_conf
         self.hits      += 1
         self.missed     = 0
         self.state      = "active"
@@ -325,13 +331,15 @@ class ByteTracker:
         low_iou:             float = 0.20,
         high_conf:           float = 0.45,
         max_trail_length:    int   = 30,
+        persistence_frames:  int   = 5,
     ):
-        self.max_age          = max_age
-        self.min_hits         = min_hits
-        self.iou_threshold    = iou_threshold
-        self.low_iou          = low_iou
-        self.high_conf        = high_conf
-        self.max_trail_length = max_trail_length
+        self.max_age            = max_age
+        self.min_hits           = min_hits
+        self.iou_threshold      = iou_threshold
+        self.low_iou            = low_iou
+        self.high_conf          = high_conf
+        self.max_trail_length   = max_trail_length
+        self.persistence_frames = persistence_frames
 
         self._tracks: List[_Track] = []
 
@@ -502,14 +510,14 @@ class ByteTracker:
 
         self._tracks = surviving
 
-        # ── Step 5: Collect output — confirmed active tracks ──────────────────
+        # ── Step 5: Collect output — confirmed active tracks + ghost tracks ──
         results: List[Dict] = []
         for t in self._tracks:
             if t.state == "active" and t.hits >= self.min_hits and t.missed == 0:
                 results.append({
                     "box":             t.box,
                     "class_id":        t.class_id,
-                    "confidence":      t.confidence,
+                    "confidence":      t.smooth_conf,
                     "track_id":        t.track_id,
                     "velocity":        t.velocity,
                     "direction":       t.direction,
@@ -517,7 +525,34 @@ class ByteTracker:
                     "hits":            t.hits,
                     "lost_count":      t.lost_count,
                     "recovered_count": t.recovered_count,
+                    "ghost":           False,
+                    "missed":          0,
                 })
+
+        # Ghost tracks: lost but within persistence window — show Kalman position
+        if self.persistence_frames > 0:
+            for t in self._tracks:
+                if (t.state == "lost" and
+                        0 < t.missed <= self.persistence_frames and
+                        t.hits >= self.min_hits):
+                    decay = max(0.0, 1.0 - t.missed / self.persistence_frames)
+                    ghost_conf = t.smooth_conf * decay
+                    if ghost_conf < 0.10:
+                        continue
+                    results.append({
+                        "box":             t.box,   # Kalman-predicted position
+                        "class_id":        t.class_id,
+                        "confidence":      ghost_conf,
+                        "track_id":        t.track_id,
+                        "velocity":        t.velocity,
+                        "direction":       t.direction,
+                        "age_sec":         t.track_age_sec,
+                        "hits":            t.hits,
+                        "lost_count":      t.lost_count,
+                        "recovered_count": t.recovered_count,
+                        "ghost":           True,
+                        "missed":          t.missed,
+                    })
 
         # ── FPS / latency ─────────────────────────────────────────────────────
         self._tracking_latency_ms = (time.perf_counter() - t_start) * 1000.0
@@ -597,4 +632,14 @@ class ByteTracker:
             "longest_active_sec": self.longest_active_track_sec,
             "tracking_fps":       self._tracking_fps,
             "latency_ms":         self._tracking_latency_ms,
+            "persistence_frames": self.persistence_frames,
         }
+
+    def get_ghost_count(self) -> int:
+        """Number of ghost (lost-but-within-persistence) tracks currently shown."""
+        if self.persistence_frames <= 0:
+            return 0
+        return sum(1 for t in self._tracks
+                   if t.state == "lost" and
+                   0 < t.missed <= self.persistence_frames and
+                   t.hits >= self.min_hits)

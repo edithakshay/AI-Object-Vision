@@ -45,7 +45,7 @@ def _class_color(cls: int) -> tuple:
 # ── Result ────────────────────────────────────────────────────────────────────
 class DetectionResult:
     __slots__ = ("boxes", "class_ids", "confidences", "class_names",
-                 "track_ids", "inference_ms", "preprocess_ms",
+                 "track_ids", "ghost_flags", "inference_ms", "preprocess_ms",
                  "postprocess_ms", "timestamp")
 
     def __init__(self):
@@ -54,6 +54,7 @@ class DetectionResult:
         self.confidences:    list  = []
         self.class_names:    list  = []
         self.track_ids:      list  = []
+        self.ghost_flags:    list  = []   # True = ghost (predicted) detection
         self.inference_ms:   float = 0.0
         self.preprocess_ms:  float = 0.0
         self.postprocess_ms: float = 0.0
@@ -705,6 +706,26 @@ class Detector:
 
 
 # ── Drawing helper ─────────────────────────────────────────────────────────────
+def _draw_dashed_rect(img, pt1, pt2, color, thickness=2, dash=8):
+    """Draw a dashed rectangle (ghost-track style)."""
+    x1, y1 = pt1
+    x2, y2 = pt2
+    pts = [(x1, y1, x2, y1), (x2, y1, x2, y2),
+           (x2, y2, x1, y2), (x1, y2, x1, y1)]
+    for ax, ay, bx, by in pts:
+        dx, dy = bx - ax, by - ay
+        length = max(1, int((dx*dx + dy*dy) ** 0.5))
+        steps  = max(1, length // (dash * 2))
+        for s in range(steps):
+            t0 = s * 2 * dash / length
+            t1 = min(1.0, (s * 2 + 1) * dash / length)
+            px1 = int(ax + dx * t0)
+            py1 = int(ay + dy * t0)
+            px2 = int(ax + dx * t1)
+            py2 = int(ay + dy * t1)
+            cv2.line(img, (px1, py1), (px2, py2), color, thickness, cv2.LINE_AA)
+
+
 def draw_detections(frame, result: DetectionResult | None) -> np.ndarray:
     if frame is None:
         return frame
@@ -713,17 +734,32 @@ def draw_detections(frame, result: DetectionResult | None) -> np.ndarray:
     out = frame.copy()
     for i, box in enumerate(result.boxes):
         x1, y1, x2, y2 = (int(v) for v in box)
-        cls  = result.class_ids[i]   if i < len(result.class_ids)   else 0
-        conf = result.confidences[i] if i < len(result.confidences) else 0.0
-        name = result.class_names[i] if i < len(result.class_names) else ""
-        tid  = result.track_ids[i]   if i < len(result.track_ids)   else 0
-        color = _class_color(cls)
-        cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-        label = f"{name} {conf:.2f}" + (f" #{tid}" if tid > 0 else "")
+        cls   = result.class_ids[i]   if i < len(result.class_ids)   else 0
+        conf  = result.confidences[i] if i < len(result.confidences) else 0.0
+        name  = result.class_names[i] if i < len(result.class_names) else ""
+        tid   = result.track_ids[i]   if i < len(result.track_ids)   else 0
+        ghost = (result.ghost_flags[i]
+                 if i < len(result.ghost_flags) else False)
+
+        base_color = _class_color(cls)
+
+        if ghost:
+            # Dimmed colour (50%) + dashed border
+            color = tuple(int(c * 0.50) for c in base_color)
+            _draw_dashed_rect(out, (x1, y1), (x2, y2), color, thickness=1)
+            label = f"(?) {name} {conf:.2f}" + (f" #{tid}" if tid > 0 else "")
+        else:
+            color = base_color
+            cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
+            label = f"{name} {conf:.2f}" + (f" #{tid}" if tid > 0 else "")
+
         (tw, th), bl = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
         by = max(y1 - th - bl - 4, 0)
-        cv2.rectangle(out, (x1, by), (x1 + tw + 4, y1), color, -1)
+        lbl_alpha = 0.5 if ghost else 1.0
+        lbl_color = tuple(int(c * lbl_alpha) for c in color)
+        cv2.rectangle(out, (x1, by), (x1 + tw + 4, y1), lbl_color, -1)
+        txt_color = (160, 160, 160) if ghost else (255, 255, 255)
         cv2.putText(out, label, (x1+2, y1-bl-2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52,
-                    (255, 255, 255), 1, cv2.LINE_AA)
+                    txt_color, 1, cv2.LINE_AA)
     return out

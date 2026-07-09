@@ -51,13 +51,15 @@ class SettingsDialog(ctk.CTkToplevel):
             segmented_button_selected_hover_color="#1D4ED8")
         self._tabs.pack(fill="both", expand=True, padx=16, pady=0)
 
-        for name in ("General", "ONNX / CPU", "Dashboard", "Tracking"):
+        for name in ("General", "ONNX / CPU", "Dashboard", "Tracking",
+                     "Optimization"):
             self._tabs.add(name)
 
         self._build_general(self._tabs.tab("General"))
         self._build_onnx_cpu(self._tabs.tab("ONNX / CPU"))
         self._build_dashboard(self._tabs.tab("Dashboard"))
         self._build_tracking(self._tabs.tab("Tracking"))
+        self._build_optimization(self._tabs.tab("Optimization"))
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=16, pady=12)
@@ -334,6 +336,114 @@ class SettingsDialog(ctk.CTkToplevel):
             height=30, command=self._restore_tracking_defaults)
         restore_btn.pack(anchor="w", pady=(4, 8))
 
+    # ── Tab 5: Optimization ────────────────────────────────────────────────────
+    def _build_optimization(self, tab):
+        from ai.model_manager import MODEL_VARIANTS
+        scroll = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        scroll.pack(fill="both", expand=True)
+
+        # ── Model Selection ──────────────────────────────────────────────────
+        self._add_section(scroll, "Model Selection")
+        ctk.CTkLabel(scroll,
+            text="Larger models detect objects more reliably but run slower on CPU.\n"
+                 "Switching requires Stop → Start to reload the model.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        variant_labels = [v["label"] for v in MODEL_VARIANTS.values()]
+        variant_keys   = list(MODEL_VARIANTS.keys())
+        cur_key        = self._settings.get("inference", "active_model", "yolo26n")
+        cur_label      = MODEL_VARIANTS.get(cur_key, MODEL_VARIANTS["yolo26n"])["label"]
+        self._opt_model_var = ctk.StringVar(value=cur_label)
+        self._opt_model_keys = variant_keys
+        self._opt_model_labels = variant_labels
+        ctk.CTkOptionMenu(scroll, values=variant_labels,
+                          variable=self._opt_model_var,
+                          fg_color="#1E293B", button_color="#2563EB",
+                          button_hover_color="#1D4ED8",
+                          font=("Segoe UI", 10)).pack(
+                          anchor="w", pady=(0, 8))
+
+        # ── Confidence Smoother ──────────────────────────────────────────────
+        self._add_section(scroll, "Confidence Smoother")
+        ctk.CTkLabel(scroll,
+            text="Prevents 1-3 frame disappearances by applying temporal\n"
+                 "EMA smoothing and synthesising ghost detections for recently-\n"
+                 "seen objects. Requires Detection ON.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._opt_smoother_en = self._add_switch(
+            scroll, "Enable Confidence Smoother",
+            self._settings.get("smoothing", "enable_smoother", True))
+        self._opt_ema = self._add_slider(
+            scroll, "EMA Alpha (lower = smoother, slower response)",
+            float(self._settings.get("smoothing", "ema_alpha", 0.35)),
+            0.05, 0.95)
+        self._opt_sm_iou = self._add_slider(
+            scroll, "Smoother IoU Threshold",
+            float(self._settings.get("smoothing", "iou_threshold", 0.40)),
+            0.10, 0.90)
+        self._opt_ghost_frames = self._add_option(
+            scroll, "Max Ghost Frames (keep alive N frames after disappear)",
+            ["0", "1", "2", "3", "4", "5", "6", "8", "10"],
+            str(self._settings.get("smoothing", "max_ghost_frames", 3)))
+        self._opt_ghost_decay = self._add_slider(
+            scroll, "Ghost Confidence Decay per Frame",
+            float(self._settings.get("smoothing", "ghost_decay", 0.70)),
+            0.30, 1.00)
+        self._opt_min_ghost_conf = self._add_slider(
+            scroll, "Minimum Ghost Confidence (below = drop)",
+            float(self._settings.get("smoothing", "min_ghost_conf", 0.25)),
+            0.05, 0.70)
+
+        # ── Detection Persistence ────────────────────────────────────────────
+        self._add_section(scroll, "Detection Persistence (Tracker)")
+        ctk.CTkLabel(scroll,
+            text="Keep showing a track's last known position (dashed box)\n"
+                 "for up to N frames after the detector loses it.\n"
+                 "0 = disabled. 5 = ~330 ms at 15 fps.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._opt_persist = self._add_slider(
+            scroll, "Persistence Frames",
+            float(self._settings.get("tracking", "persistence_frames", 5)),
+            0.0, 15.0)
+
+        # ── Box Area Filter ──────────────────────────────────────────────────
+        self._add_section(scroll, "Box Area Filter (pixels²)")
+        ctk.CTkLabel(scroll,
+            text="Ignore detections that are too small (noise) or too large\n"
+                 "(full-frame false positives). 0 = disabled.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._opt_min_area = self._add_entry(
+            scroll, "Minimum Box Area (px²)",
+            str(self._settings.get("smoothing", "min_box_area", 0)))
+        self._opt_max_area = self._add_entry(
+            scroll, "Maximum Box Area (px²)",
+            str(self._settings.get("smoothing", "max_box_area", 0)))
+
+        restore_btn = ctk.CTkButton(
+            scroll, text="Restore Optimization Defaults",
+            fg_color="#1E293B", hover_color="#334155",
+            height=30, command=self._restore_optimization_defaults)
+        restore_btn.pack(anchor="w", pady=(8, 8))
+
+    def _restore_optimization_defaults(self):
+        from ai.model_manager import MODEL_VARIANTS
+        try:
+            self._opt_model_var.set(MODEL_VARIANTS["yolo26n"]["label"])
+            self._opt_smoother_en.set(True)
+            self._opt_ema.set(0.35)
+            self._opt_sm_iou.set(0.40)
+            self._opt_ghost_frames.set("3")
+            self._opt_ghost_decay.set(0.70)
+            self._opt_min_ghost_conf.set(0.25)
+            self._opt_persist.set(5.0)
+            self._opt_min_area.delete(0, "end"); self._opt_min_area.insert(0, "0")
+            self._opt_max_area.delete(0, "end"); self._opt_max_area.insert(0, "0")
+        except Exception:
+            pass
+
     def _restore_tracking_defaults(self):
         defaults = {
             "enable_trails":              False,
@@ -595,6 +705,34 @@ class SettingsDialog(ctk.CTkToplevel):
                                    float(self._trk_assoc.get()))
                 self._settings.set("tracking", "tracking_confidence",
                                    float(self._trk_conf_split.get()))
+            except Exception:
+                pass
+            # Optimization tab
+            try:
+                from ai.model_manager import MODEL_VARIANTS
+                sel_label = self._opt_model_var.get()
+                sel_key   = next(
+                    (k for k, v in MODEL_VARIANTS.items()
+                     if v["label"] == sel_label), "yolo26n")
+                self._settings.set("inference", "active_model", sel_key)
+                self._settings.set("smoothing", "enable_smoother",
+                                   bool(self._opt_smoother_en.get()))
+                self._settings.set("smoothing", "ema_alpha",
+                                   float(self._opt_ema.get()))
+                self._settings.set("smoothing", "iou_threshold",
+                                   float(self._opt_sm_iou.get()))
+                self._settings.set("smoothing", "max_ghost_frames",
+                                   int(self._opt_ghost_frames.get()))
+                self._settings.set("smoothing", "ghost_decay",
+                                   float(self._opt_ghost_decay.get()))
+                self._settings.set("smoothing", "min_ghost_conf",
+                                   float(self._opt_min_ghost_conf.get()))
+                self._settings.set("tracking", "persistence_frames",
+                                   int(float(self._opt_persist.get())))
+                self._settings.set("smoothing", "min_box_area",
+                                   int(self._opt_min_area.get() or 0))
+                self._settings.set("smoothing", "max_box_area",
+                                   int(self._opt_max_area.get() or 0))
             except Exception:
                 pass
             self._settings.save()

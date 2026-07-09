@@ -1,12 +1,17 @@
 """
 Model Manager — DualVision AI v1.3 Stable CPU Edition.
 
-Fixed model: YOLO26n only.
-  • Downloads yolo26n.pt once (internet required only the first time).
-  • Exports yolo26n.onnx once via ultralytics (PyTorch is used only here).
-  • Every subsequent run loads the .onnx directly — no PyTorch at runtime.
+Multi-model support: YOLO26n, YOLO26s, YOLO26m, YOLO26l, YOLO26x.
 
-No model switching. No model list. One model. One backend.
+Export-once policy:
+  • If models/<variant>.onnx already exists  → load directly.
+  • Otherwise export from <variant>.pt once  → reuse permanently.
+  • Never re-export on every startup.
+
+Backward compatibility:
+  • All v1.2 callers that relied on the single-model API still work.
+  • get_onnx_path()  → returns path for the currently selected variant.
+  • is_onnx_ready()  → checks the currently selected variant.
 """
 
 import logging
@@ -16,28 +21,86 @@ from pathlib import Path
 
 logger = logging.getLogger("DualVisionAI.model")
 
-# ── Fixed model constants ──────────────────────────────────────────────────────
-MODEL_NAME    = "yolo26n.pt"
-MODEL_VERSION = "YOLO26n (Ultralytics v8.4.0)"
-MODEL_SIZE_MB = 6        # approximate download size
-ONNX_OPSET   = 17
-ONNX_IMGSZ   = 640
+# ── Model registry ─────────────────────────────────────────────────────────────
+# Keys are the variant suffix (also the user-visible display name).
+MODEL_VARIANTS = {
+    "yolo26n": {
+        "pt_name":    "yolo26n.pt",
+        "onnx_name":  "yolo26n.onnx",
+        "size_mb":    6,
+        "label":      "YOLO26n  (Nano  — fastest,  ~6 MB)",
+        "url_path":   "yolo26n.pt",
+    },
+    "yolo26s": {
+        "pt_name":    "yolo26s.pt",
+        "onnx_name":  "yolo26s.onnx",
+        "size_mb":    22,
+        "label":      "YOLO26s  (Small — balanced, ~22 MB)",
+        "url_path":   "yolo26s.pt",
+    },
+    "yolo26m": {
+        "pt_name":    "yolo26m.pt",
+        "onnx_name":  "yolo26m.onnx",
+        "size_mb":    52,
+        "label":      "YOLO26m  (Medium — accurate, ~52 MB)",
+        "url_path":   "yolo26m.pt",
+    },
+    "yolo26l": {
+        "pt_name":    "yolo26l.pt",
+        "onnx_name":  "yolo26l.onnx",
+        "size_mb":    87,
+        "label":      "YOLO26l  (Large  — high accuracy, ~87 MB)",
+        "url_path":   "yolo26l.pt",
+    },
+    "yolo26x": {
+        "pt_name":    "yolo26x.pt",
+        "onnx_name":  "yolo26x.onnx",
+        "size_mb":    136,
+        "label":      "YOLO26x  (XLarge — best accuracy, ~136 MB)",
+        "url_path":   "yolo26x.pt",
+    },
+}
 
-_BASE_URL  = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
-_MODEL_URL = f"{_BASE_URL}/{MODEL_NAME}"
+# Default variant (kept for legacy callers)
+DEFAULT_VARIANT = "yolo26n"
+MODEL_NAME      = MODEL_VARIANTS[DEFAULT_VARIANT]["pt_name"]   # legacy alias
+MODEL_VERSION   = "YOLO26n (Ultralytics v8.4.0)"               # legacy alias
+MODEL_SIZE_MB   = 6                                             # legacy alias
+ONNX_OPSET      = 17
+ONNX_IMGSZ      = 640
+_BASE_URL       = "https://github.com/ultralytics/assets/releases/download/v8.4.0"
 
 
 class ModelManager:
     """
-    Manages the single YOLO26n model file.
-    Responsibilities: download .pt, export .onnx, report status.
+    Manages any YOLO26 variant.
+    Default variant: yolo26n (backward compatible with v1.2).
     """
 
-    def __init__(self, model_dir: str = "models"):
+    def __init__(self, model_dir: str = "models", variant: str = DEFAULT_VARIANT):
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        self._progress_cb = None
-        self._status_cb   = None
+        self._variant      = variant if variant in MODEL_VARIANTS else DEFAULT_VARIANT
+        self._progress_cb  = None
+        self._status_cb    = None
+
+    # ── Variant selection ─────────────────────────────────────────────────────
+    @property
+    def variant(self) -> str:
+        return self._variant
+
+    def set_variant(self, variant: str):
+        if variant not in MODEL_VARIANTS:
+            raise ValueError(
+                f"Unknown variant '{variant}'. "
+                f"Valid: {list(MODEL_VARIANTS.keys())}")
+        self._variant = variant
+        logger.info(f"Model variant set to: {variant}")
+
+    @staticmethod
+    def list_variants() -> list:
+        """Return list of (key, label) pairs for all supported models."""
+        return [(k, v["label"]) for k, v in MODEL_VARIANTS.items()]
 
     # ── Callbacks ─────────────────────────────────────────────────────────────
     def set_callbacks(self, progress=None, status=None):
@@ -56,72 +119,95 @@ class ModelManager:
             except Exception: pass
 
     # ── Paths ─────────────────────────────────────────────────────────────────
-    def get_pt_path(self) -> Path:
-        return self.model_dir / MODEL_NAME
+    def _meta(self, variant: str | None = None) -> dict:
+        v = variant or self._variant
+        return MODEL_VARIANTS[v]
 
-    def get_onnx_path(self) -> Path:
-        return self.model_dir / MODEL_NAME.replace(".pt", ".onnx")
+    def get_pt_path(self, variant: str | None = None) -> Path:
+        return self.model_dir / self._meta(variant)["pt_name"]
 
-    # Kept for compatibility with code that calls get_model_path(name)
-    def get_model_path(self, name: str = MODEL_NAME) -> Path:
-        return self.model_dir / name
+    def get_onnx_path(self, variant: str | None = None) -> Path:
+        return self.model_dir / self._meta(variant)["onnx_name"]
+
+    # Legacy alias — returns path for active variant
+    def get_model_path(self, name: str | None = None) -> Path:
+        if name and name != self._meta()["pt_name"]:
+            return self.model_dir / name
+        return self.get_pt_path()
 
     # ── Status checks ─────────────────────────────────────────────────────────
-    def is_pt_ready(self) -> bool:
-        p = self.get_pt_path()
+    def is_pt_ready(self, variant: str | None = None) -> bool:
+        p = self.get_pt_path(variant)
         return p.exists() and p.stat().st_size > 100_000
 
-    def is_onnx_ready(self) -> bool:
-        p = self.get_onnx_path()
+    def is_onnx_ready(self, variant: str | None = None) -> bool:
+        p = self.get_onnx_path(variant)
         return p.exists() and p.stat().st_size > 100_000
 
-    def is_downloaded(self, name: str = MODEL_NAME) -> bool:
-        """Compatibility alias."""
+    def is_downloaded(self, name: str | None = None) -> bool:
+        """Legacy alias — checks whether the active variant's .pt is present."""
         return self.is_pt_ready()
 
+    def get_all_model_status(self) -> list:
+        """Return status for every variant (for benchmark / comparison UI)."""
+        result = []
+        for key, meta in MODEL_VARIANTS.items():
+            result.append({
+                "variant":    key,
+                "label":      meta["label"],
+                "pt_ready":   self.is_pt_ready(key),
+                "onnx_ready": self.is_onnx_ready(key),
+                "pt_mb":      self._file_mb(self.get_pt_path(key)),
+                "onnx_mb":    self._file_mb(self.get_onnx_path(key)),
+            })
+        return result
+
+    def _file_mb(self, p: Path) -> float:
+        return round(p.stat().st_size / 1_048_576, 1) if p.exists() else 0.0
+
     # ── Info ──────────────────────────────────────────────────────────────────
-    def get_model_info(self) -> dict:
-        pt_path   = self.get_pt_path()
-        onnx_path = self.get_onnx_path()
-        pt_mb = (pt_path.stat().st_size / 1_048_576
-                 if pt_path.exists() else 0.0)
-        onnx_mb = (onnx_path.stat().st_size / 1_048_576
-                   if onnx_path.exists() else 0.0)
+    def get_model_info(self, variant: str | None = None) -> dict:
+        v     = variant or self._variant
+        meta  = self._meta(v)
+        pt_p  = self.get_pt_path(v)
+        on_p  = self.get_onnx_path(v)
         return {
-            "name":       MODEL_NAME,
-            "version":    MODEL_VERSION,
-            "pt_path":    str(pt_path),
-            "onnx_path":  str(onnx_path) if self.is_onnx_ready() else "Not exported",
-            "pt_mb":      round(pt_mb, 1),
-            "onnx_mb":    round(onnx_mb, 1),
+            "name":       meta["pt_name"],
+            "variant":    v,
+            "label":      meta["label"],
+            "version":    f"YOLO26{v[-1].upper()} (Ultralytics v8.4.0)",
+            "pt_path":    str(pt_p),
+            "onnx_path":  str(on_p) if self.is_onnx_ready(v) else "Not exported",
+            "pt_mb":      self._file_mb(pt_p),
+            "onnx_mb":    self._file_mb(on_p),
             "cache_dir":  str(self.model_dir.resolve()),
-            "pt_ready":   self.is_pt_ready(),
-            "onnx_ready": self.is_onnx_ready(),
+            "pt_ready":   self.is_pt_ready(v),
+            "onnx_ready": self.is_onnx_ready(v),
         }
 
     # ── Download ──────────────────────────────────────────────────────────────
-    def ensure_pt(self, blocking: bool = True) -> Path | None:
-        """
-        Ensure yolo26n.pt is present locally.
-        Downloads from ultralytics if missing.
-        Returns local path or None on failure.
-        """
-        if self.is_pt_ready():
-            self._status(f"Model ready: {MODEL_NAME}")
-            return self.get_pt_path()
-
+    def ensure_pt(self, blocking: bool = True,
+                  variant: str | None = None) -> Path | None:
+        v = variant or self._variant
+        if self.is_pt_ready(v):
+            self._status(f"Model ready: {self._meta(v)['pt_name']}")
+            return self.get_pt_path(v)
         if blocking:
-            return self._download_pt()
-        threading.Thread(target=self._download_pt, daemon=True,
-                         name="Download-YOLO26n").start()
+            return self._download_pt(v)
+        threading.Thread(target=self._download_pt, args=(v,),
+                         daemon=True,
+                         name=f"Download-{v}").start()
         return None
 
-    def _download_pt(self) -> Path | None:
+    def _download_pt(self, variant: str) -> Path | None:
         from urllib.request import urlretrieve
-        from urllib.error import URLError, HTTPError
+        from urllib.error   import URLError, HTTPError
 
-        dest = self.get_pt_path()
-        self._status(f"Downloading {MODEL_NAME} (~{MODEL_SIZE_MB} MB) …")
+        meta = self._meta(variant)
+        url  = f"{_BASE_URL}/{meta['url_path']}"
+        dest = self.get_pt_path(variant)
+        self._status(f"Downloading {meta['pt_name']} "
+                     f"(~{meta['size_mb']} MB) …")
         self._progress(0.0)
         tmp = dest.with_suffix(".tmp")
 
@@ -131,19 +217,18 @@ class ModelManager:
                 self._progress(pct)
 
         try:
-            urlretrieve(_MODEL_URL, str(tmp), reporthook=_hook)
+            urlretrieve(url, str(tmp), reporthook=_hook)
             tmp.rename(dest)
             mb = dest.stat().st_size / 1_048_576
             self._progress(100.0)
-            self._status(f"Downloaded: {MODEL_NAME} ({mb:.1f} MB)")
+            self._status(f"Downloaded: {meta['pt_name']} ({mb:.1f} MB)")
             logger.info(f"Model downloaded: {dest}")
             return dest
         except (HTTPError, URLError) as exc:
             logger.error(f"Download failed: {exc}")
             self._status(f"Download failed: {exc}")
         except Exception as exc:
-            tb = traceback.format_exc()
-            logger.error(f"Download error:\n{tb}")
+            logger.error(f"Download error:\n{traceback.format_exc()}")
             self._status(f"Download error: {exc}")
         finally:
             self._progress(0.0)
@@ -153,28 +238,27 @@ class ModelManager:
         return None
 
     # ── ONNX Export ───────────────────────────────────────────────────────────
-    def export_onnx(self) -> Path | None:
+    def export_onnx(self, variant: str | None = None) -> Path | None:
         """
-        Export yolo26n.pt → yolo26n.onnx using ultralytics (PyTorch).
-        PyTorch is used ONLY here — never during inference.
-        Returns .onnx Path on success, None on failure.
-        Raises on unexpected errors so the caller can show a popup.
+        Export <variant>.pt → <variant>.onnx once; skip if already done.
+        PyTorch used only here — never during inference.
         """
-        onnx_path = self.get_onnx_path()
+        v         = variant or self._variant
+        onnx_path = self.get_onnx_path(v)
 
-        if self.is_onnx_ready():
-            self._status(f"ONNX already exported: {onnx_path.name}")
+        if self.is_onnx_ready(v):
+            self._status(f"ONNX ready: {onnx_path.name}")
             return onnx_path
 
-        if not self.is_pt_ready():
+        if not self.is_pt_ready(v):
             raise FileNotFoundError(
-                f"{MODEL_NAME} not found in {self.model_dir}.\n"
+                f"{self._meta(v)['pt_name']} not found in {self.model_dir}.\n"
                 "Click 'Download Model' first.")
 
-        pt_path = self.get_pt_path()
-        self._status(f"Exporting {MODEL_NAME} → ONNX (opset={ONNX_OPSET}, "
-                     f"imgsz={ONNX_IMGSZ}) …")
-        logger.info(f"Starting ONNX export: {pt_path.name}")
+        pt_path = self.get_pt_path(v)
+        self._status(f"Exporting {pt_path.name} → ONNX "
+                     f"(opset={ONNX_OPSET}, imgsz={ONNX_IMGSZ}) …")
+        logger.info(f"ONNX export start: {pt_path.name}")
 
         try:
             from ultralytics import YOLO
@@ -183,27 +267,25 @@ class ModelManager:
                 format="onnx",
                 imgsz=ONNX_IMGSZ,
                 simplify=True,
-                half=False,       # CPU inference — FP32 always
+                half=False,
                 dynamic=False,
                 opset=ONNX_OPSET,
             )
             exported_p = Path(exported) if exported else None
 
-            # Ultralytics may save alongside .pt — move to models/
             if exported_p and exported_p.exists() and exported_p != onnx_path:
                 exported_p.rename(onnx_path)
 
-            if self.is_onnx_ready():
+            if self.is_onnx_ready(v):
                 mb = onnx_path.stat().st_size / 1_048_576
                 self._status(f"ONNX exported: {onnx_path.name} ({mb:.1f} MB)")
-                logger.info(f"ONNX export complete: {onnx_path} ({mb:.1f} MB)")
+                logger.info(f"Export complete: {onnx_path} ({mb:.1f} MB)")
                 return onnx_path
 
             raise RuntimeError(
-                f"ONNX export ran but file not found at {onnx_path}.\n"
-                "Check ultralytics logs for errors.")
+                f"Export ran but ONNX not found at {onnx_path}. "
+                "Check ultralytics logs.")
         except Exception as exc:
             tb = traceback.format_exc()
             logger.error(f"ONNX export failed:\n{tb}")
-            raise RuntimeError(
-                f"ONNX export failed: {exc}\n\n{tb}") from exc
+            raise RuntimeError(f"ONNX export failed: {exc}\n\n{tb}") from exc

@@ -23,8 +23,19 @@ DEFAULT_SETTINGS = {
         "use_fp16":         False,
         "cpu_threads":      0,
         "model_name":       "yolo26n.pt",
+        "active_model":     "yolo26n",
         "use_onnx":         True,
         "export_onnx_on_load": True
+    },
+    "smoothing": {
+        "enable_smoother":    True,
+        "ema_alpha":          0.35,
+        "iou_threshold":      0.40,
+        "max_ghost_frames":   3,
+        "ghost_decay":        0.70,
+        "min_ghost_conf":     0.25,
+        "min_box_area":       0,
+        "max_box_area":       0
     },
     "ui": {
         "theme":            "dark",
@@ -57,7 +68,8 @@ DEFAULT_SETTINGS = {
         "min_confirmation_hits":      3,
         "tracking_confidence":        0.40,
         "association_threshold":      0.20,
-        "low_association_threshold":  0.10
+        "low_association_threshold":  0.10,
+        "persistence_frames":         5
     }
 }
 

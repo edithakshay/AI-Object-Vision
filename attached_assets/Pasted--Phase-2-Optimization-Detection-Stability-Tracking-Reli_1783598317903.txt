@@ -1,0 +1,225 @@
+
+
+Phase 2  Optimization (Detection Stability & Tracking Reliability)
+You are working on my existing project:
+This is NOT a new project.
+Continue from the current stable version.
+Do NOT redesign the UI.
+Do NOT modify the working ONNX Runtime pipeline.
+Do NOT reduce FPS.
+The application is already stable.
+The remaining objective is to maximize detection stability and tracking reliability.
+Current Problem
+The application works correctly.
+However,
+sometimes a stationary object temporarily disappears for 1–3 frames.
+Example:
+Chair
+↓
+Detected
+↓
+Missing for 2 frames
+↓
+Detected again
+↓
+Track ID changes
+This causes unstable tracking.
+The same problem occasionally occurs with Person and Bottle.
+The goal is to determine whether the issue is caused by:
+YOLO26n detection accuracy
+Detection confidence threshold
+ByteTrack configuration
+Do not guess.
+Implement a systematic solution.
+PART 1 – Multi-Model Support
+Support the following official models:
+YOLO26n
+YOLO26s
+YOLO26m
+YOLO26l
+YOLO26x
+The application must allow switching between models.
+If
+models/yolo26s.onnx
+already exists
+↓
+Load directly.
+Otherwise
+↓
+Export from
+yolo26s.pt
+↓
+Create ONNX once
+↓
+Reuse permanently.
+Never export at every startup.
+Apply the same logic for all models.
+PART 2 – Model Benchmark
+Create a benchmark system.
+For every model automatically measure:
+Average FPS
+Inference Time
+CPU Usage
+RAM Usage
+Average Confidence
+Detection Stability
+Dropped Detections
+False Positives
+False Negatives
+Track ID Changes
+Generate:
+MODEL_BENCHMARK.md
+Rank all models.
+Recommend the best model for CPU.
+PART 3 – Detection Stability Analysis
+Add a Detection Stability metric.
+For every object calculate:
+Frames Detected
+Frames Missing
+Detection Continuity %
+Average Confidence
+Maximum Confidence
+Minimum Confidence
+Detection Drop Count
+Display these statistics in a new Debug window.
+PART 4 – Confidence Optimization
+Current confidence threshold may be too aggressive.
+Implement configurable thresholds.
+Allow:
+Confidence Threshold
+IoU Threshold
+Class Confidence
+Minimum Box Area
+Maximum Box Area
+Live adjustment without restarting.
+Add Restore Defaults.
+PART 5 – Confidence Smoothing
+Avoid temporary disappearance.
+If confidence fluctuates:
+0.74
+↓
+0.72
+↓
+0.39
+↓
+0.71
+Do not immediately remove the object.
+Use temporal confidence smoothing.
+Keep detections stable.
+PART 6 – ByteTrack Optimization
+Tune:
+track_high_thresh
+track_low_thresh
+new_track_thresh
+match_thresh
+track_buffer
+track_confirm_frames
+association_threshold
+appearance_weight
+motion_weight
+The tracker must survive:
+Temporary occlusion
+Camera vibration
+Fast movement
+Lighting changes
+Momentary confidence drops
+PART 7 – Lost Detection Buffer
+If an object disappears for only a few frames,
+keep the track alive.
+Do not immediately destroy the Track ID.
+Recover the same Track ID when detection returns.
+Configurable:
+Maximum Lost Frames
+PART 8 – Motion Prediction
+Implement simple prediction.
+If one frame is missing,
+estimate the object's next position.
+Do not remove the bounding box immediately.
+Update again when the detector recovers.
+PART 9 – Detection Persistence
+Implement configurable persistence.
+Example:
+Object disappears
+↓
+Keep last detection for
+0.2
+0.3
+0.5
+seconds
+If detection returns,
+continue the same Track ID.
+If timeout expires,
+remove the object.
+PART 10 – Debug Dashboard
+Display:
+Detection Stability %
+Track Stability %
+ID Changes
+Lost Frames
+Recovered Frames
+Average Confidence
+Confidence Trend
+Detection Lifetime
+Detection Drops
+PART 11 – Comparison Tool
+Create a testing page.
+Compare:
+YOLO26n
+YOLO26s
+YOLO26m
+YOLO26l
+YOLO26x
+Run all on the same recorded video.
+Display:
+FPS
+Inference Time
+Detection Count
+Track Stability
+Detection Stability
+Memory Usage
+CPU Usage
+Best Model Recommendation
+PART 12 – Regression Protection
+Do NOT modify:
+Camera Module
+ONNX Runtime
+Recording
+Screenshot
+Dashboard
+CSV
+JSON
+Detection Overlay
+These features already work correctly.
+PART 13 – Acceptance Test
+Use one static chair.
+Run for
+5 minutes.
+Track must remain stable.
+No unnecessary ID changes.
+Then test:
+Walking Person
+Moving Bottle
+Two Chairs
+Two Persons
+Camera Shake
+Temporary Occlusion
+All tests must pass.
+Deliverables
+Generate:
+TRACKING_OPTIMIZATION_REPORT.md
+Include:
+Which model performed best
+Tracking parameter values
+Confidence values
+Detection stability results
+Remaining limitations
+Recommended production settings
+FINAL REQUIREMENT
+The goal is NOT simply to increase FPS.
+The goal is:
+Maximum detection stability
+Stable Track IDs
+Minimum detection flicker
+Minimum ID changes
+Reliable long-duration Search & Rescue operation
+Never sacrifice stability for speed.
