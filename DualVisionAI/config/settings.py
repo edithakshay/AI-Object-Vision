@@ -38,7 +38,8 @@ DEFAULT_SETTINGS = {
     "recording": {
         "output_dir":       "recordings",
         "codec":            "mp4v",
-        "fps":              25
+        "fps":              25,
+        "recording_mode":   "overlay"
     },
     "screenshots": {
         "output_dir":       "screenshots",
@@ -52,11 +53,11 @@ DEFAULT_SETTINGS = {
     "tracking": {
         "enable_trails":              False,
         "max_trail_length":           30,
-        "track_timeout":              5,
-        "min_confirmation_hits":      1,
-        "tracking_confidence":        0.45,
-        "association_threshold":      0.35,
-        "low_association_threshold":  0.20
+        "track_timeout":              30,
+        "min_confirmation_hits":      3,
+        "tracking_confidence":        0.40,
+        "association_threshold":      0.20,
+        "low_association_threshold":  0.10
     }
 }
 

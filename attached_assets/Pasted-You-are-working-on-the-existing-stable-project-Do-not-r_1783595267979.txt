@@ -1,0 +1,134 @@
+You are working on the existing stable project.
+Do not redesign the application.
+Do not modify the working ONNX Runtime detection pipeline.
+Do not change the UI.
+The project is almost complete.
+Only two issues remain.
+ISSUE 1 — Stable Tracking IDs
+Current behavior:
+The tracker assigns IDs correctly.
+However,
+while the same object moves,
+the Track ID frequently changes.
+Example:
+Chair
+ID 5
+↓
+ID 8
+↓
+ID 12
+Person
+ID 2
+↓
+ID 7
+↓
+ID 15
+This is incorrect.
+The same object must keep the same Track ID while continuously visible.
+Requirements
+Tune the tracking algorithm.
+Review ByteTrack parameters.
+Tune:
+track_high_thresh
+track_low_thresh
+new_track_thresh
+match_thresh
+track_buffer
+minimum_confirmed_frames
+association_threshold
+appearance_threshold
+Adjust them to maximize ID stability.
+Do not simply increase thresholds blindly.
+Use balanced values.
+Re-identification
+When an object moves,
+keep the same Track ID.
+When an object disappears briefly,
+recover the same Track ID if possible.
+Only assign a new ID if the object has actually left the scene.
+Track Confirmation
+Do not create a confirmed Track ID immediately.
+Require a configurable number of consecutive detections before confirming.
+Track Lifetime
+Display:
+Track Age
+Frames Tracked
+Lost Time
+Recovered Count
+Verification
+Perform tests:
+Single Chair
+Moving Chair
+Walking Person
+Bottle
+Two Persons Crossing
+Temporary Occlusion
+Fast Motion
+Camera Shake
+ID must remain stable.
+ISSUE 2 — Recording Bug
+Current behavior:
+Detection OFF
+↓
+Recording ON
+↓
+Creates a 1 KB corrupted file.
+This is incorrect.
+Recording must not depend on detection.
+Recording must capture camera frames regardless of whether AI detection is enabled.
+Requirements
+Separate:
+Camera Capture
+Detection
+Recording
+The recording pipeline must receive frames directly from the active camera stream.
+Detection overlay should be optional.
+Recording modes:
+Raw Camera
+Record original camera frames.
+AI Overlay
+Record processed frames with bounding boxes.
+User selectable.
+Recording Verification
+Detection OFF
+↓
+Recording ON
+↓
+Normal playable video.
+Detection ON
+↓
+Recording ON
+↓
+Normal playable video with overlay.
+Both modes must work.
+Regression Protection
+Before modifying anything,
+verify that these continue working:
+RGB
+Thermal
+Camera Switching
+Detection
+Bounding Boxes
+Dashboard
+CSV
+JSON
+Screenshot
+FPS
+ONNX Runtime
+Do not break any existing feature.
+Deliverables
+Generate:
+PHASE2_FINAL_REPORT.md
+Include:
+Tracking parameters
+Tracking improvements
+Recording fixes
+Regression test results
+Remaining known issues (if any)
+Acceptance Criteria
+Phase 2 is complete only when:
+Same moving object keeps the same ID.
+Temporary occlusion does not immediately change the ID.
+Recording works with Detection OFF.
+Recording works with Detection ON.
+All previously working features remain functional.

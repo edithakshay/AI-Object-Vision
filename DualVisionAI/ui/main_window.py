@@ -178,11 +178,11 @@ class MainWindow(ctk.CTk):
         """Create a ByteTracker from current tracking settings."""
         ts = self._settings.section("tracking")
         return ByteTracker(
-            max_age=int(ts.get("track_timeout", 5)),
-            min_hits=int(ts.get("min_confirmation_hits", 1)),
-            iou_threshold=float(ts.get("association_threshold", 0.35)),
-            low_iou=float(ts.get("low_association_threshold", 0.20)),
-            high_conf=float(ts.get("tracking_confidence", 0.45)),
+            max_age=int(ts.get("track_timeout", 30)),
+            min_hits=int(ts.get("min_confirmation_hits", 3)),
+            iou_threshold=float(ts.get("association_threshold", 0.20)),
+            low_iou=float(ts.get("low_association_threshold", 0.10)),
+            high_conf=float(ts.get("tracking_confidence", 0.40)),
             max_trail_length=int(ts.get("max_trail_length", 30)),
         )
 
@@ -463,6 +463,10 @@ class MainWindow(ctk.CTk):
                         self._rgb_display_frame = frame
                     else:
                         self._thermal_display_frame = frame
+                # ── Recording without detection — always write raw frame ───────
+                rec_label = "RGB" if mode == "rgb" else "Thermal"
+                if self._recorder.is_recording(rec_label):
+                    self._recorder.write(rec_label, frame)
             return
 
         if frame is not None:
@@ -473,16 +477,19 @@ class MainWindow(ctk.CTk):
 
         track = self._settings.get("detection", "enable_tracking", True)
 
-        enable_trails = (track and
-                         self._settings.get("tracking", "enable_trails", False))
+        enable_trails  = (track and
+                          self._settings.get("tracking", "enable_trails", False))
+        rec_mode       = self._settings.get("recording", "recording_mode", "overlay")
 
         if mode == "rgb":
             self._process_result(frame, "rgb", track)
             display = draw_detections(frame, self._rgb_draw_result) if frame is not None else None
             if display is not None and enable_trails:
                 display = draw_trails(display, self._rgb_tracker.get_trails())
-            if display is not None and self._recorder.is_recording("RGB"):
-                self._recorder.write("RGB", display)
+            if self._recorder.is_recording("RGB"):
+                rec_frame = frame if (rec_mode == "raw" and frame is not None) else display
+                if rec_frame is not None:
+                    self._recorder.write("RGB", rec_frame)
             if display is not None:
                 with self._frame_lock:
                     self._rgb_display_frame = display
@@ -491,8 +498,10 @@ class MainWindow(ctk.CTk):
             display = draw_detections(frame, self._thermal_draw_result) if frame is not None else None
             if display is not None and enable_trails:
                 display = draw_trails(display, self._thermal_tracker.get_trails())
-            if display is not None and self._recorder.is_recording("Thermal"):
-                self._recorder.write("Thermal", display)
+            if self._recorder.is_recording("Thermal"):
+                rec_frame = frame if (rec_mode == "raw" and frame is not None) else display
+                if rec_frame is not None:
+                    self._recorder.write("Thermal", rec_frame)
             if display is not None:
                 with self._frame_lock:
                     self._thermal_display_frame = display

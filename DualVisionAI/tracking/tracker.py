@@ -188,6 +188,10 @@ class _Track:
         self.first_seen  = _now
         self.last_seen   = _now
 
+        # Lifecycle counters
+        self.lost_count      = 0   # times this track went "lost"
+        self.recovered_count = 0   # times this track was recovered
+
         # Motion
         self.velocity  = (0.0, 0.0)    # (vx, vy) pixels/frame
         self.direction = "stationary"
@@ -422,7 +426,7 @@ class ByteTracker:
                     self._recovered_tracks_total += 1
                     self._emit("recovered", track)
 
-        # ── Stage 2: Remaining high-conf dets vs lost tracks ──────────────────
+        # ── Stage 2a: Unmatched high-conf dets vs lost tracks ────────────────
         unmatched_high = [(i, d) for i, d in enumerate(high_dets)
                           if ("high", i) not in matched_det_indices]
         if lost_tracks and unmatched_high:
@@ -433,8 +437,30 @@ class ByteTracker:
                 orig_i = unmatched_high[di][0]
                 det    = high_dets[orig_i]
                 track.update(det["box"], det["class_id"], det["confidence"])
+                track.recovered_count += 1
                 matched_track_ids.add(track.track_id)
                 matched_det_indices.add(("high", orig_i))
+                self._recovered_tracks_total += 1
+                self._emit("recovered", track)
+
+        # ── Stage 2b: Unmatched low-conf dets vs still-unmatched lost tracks ─
+        # Gap fix: a returning object detected at low confidence would otherwise
+        # spawn a NEW track instead of recovering the existing lost one.
+        unmatched_low = [(i, d) for i, d in enumerate(low_dets)
+                         if ("low", i) not in matched_det_indices]
+        still_lost = [t for t in lost_tracks
+                      if t.track_id not in matched_track_ids]
+        if still_lost and unmatched_low:
+            mat   = _iou_matrix(still_lost, [d for _, d in unmatched_low])
+            pairs = _greedy_match(mat, self.low_iou)
+            for ti, di in pairs:
+                track  = still_lost[ti]
+                orig_i = unmatched_low[di][0]
+                det    = low_dets[orig_i]
+                track.update(det["box"], det["class_id"], det["confidence"])
+                track.recovered_count += 1
+                matched_track_ids.add(track.track_id)
+                matched_det_indices.add(("low", orig_i))
                 self._recovered_tracks_total += 1
                 self._emit("recovered", track)
 
@@ -467,6 +493,7 @@ class ByteTracker:
                 surviving.append(t)
             elif t.missed <= self.max_age:
                 if t.state == "active":          # just became lost
+                    t.lost_count += 1
                     self._emit("lost", t)
                 t.state = "lost"
                 surviving.append(t)
@@ -480,14 +507,16 @@ class ByteTracker:
         for t in self._tracks:
             if t.state == "active" and t.hits >= self.min_hits and t.missed == 0:
                 results.append({
-                    "box":        t.box,
-                    "class_id":   t.class_id,
-                    "confidence": t.confidence,
-                    "track_id":   t.track_id,
-                    "velocity":   t.velocity,
-                    "direction":  t.direction,
-                    "age_sec":    t.track_age_sec,
-                    "hits":       t.hits,
+                    "box":             t.box,
+                    "class_id":        t.class_id,
+                    "confidence":      t.confidence,
+                    "track_id":        t.track_id,
+                    "velocity":        t.velocity,
+                    "direction":       t.direction,
+                    "age_sec":         t.track_age_sec,
+                    "hits":            t.hits,
+                    "lost_count":      t.lost_count,
+                    "recovered_count": t.recovered_count,
                 })
 
         # ── FPS / latency ─────────────────────────────────────────────────────

@@ -106,6 +106,17 @@ class SettingsDialog(ctk.CTkToplevel):
             scroll, "Enable Object Tracking",
             self._settings.get("detection", "enable_tracking", True))
 
+        self._add_section(scroll, "Recording")
+        ctk.CTkLabel(scroll,
+            text="Recording mode applies when Detection is ON.\n"
+                 "When Detection is OFF, raw camera frames are always recorded.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._recording_mode = self._add_option(
+            scroll, "Recording Mode",
+            ["overlay", "raw"],
+            str(self._settings.get("recording", "recording_mode", "overlay")))
+
         self._add_section(scroll, "CPU Threads")
         ctk.CTkLabel(scroll,
             text="0 = auto-detect (recommended).\n"
@@ -568,6 +579,8 @@ class SettingsDialog(ctk.CTkToplevel):
                                    int(self._cpu_threads.get()))
             except Exception:
                 pass
+            self._settings.set("recording", "recording_mode",
+                               self._recording_mode.get())
             # Tracking tab
             try:
                 self._settings.set("tracking", "enable_trails",

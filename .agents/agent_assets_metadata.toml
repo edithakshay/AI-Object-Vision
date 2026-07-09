@@ -54,3 +54,9 @@ id = "CAfE34OX6sjOOEaFc9XOj"
 uri = "file://DualVisionAI_v1.3_Phase2.tar.gz"
 type = "unspecified"
 title = "DualVisionAI_v1.3_Phase2.tar.gz"
+
+[[outputs]]
+id = "C--qgU4qZ7KNWZBfZ1weo"
+uri = "file://DualVisionAI_v1.3_BugFix.tar.gz"
+type = "unspecified"
+title = "DualVisionAI_v1.3_BugFix.tar.gz"
