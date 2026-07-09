@@ -48,3 +48,9 @@ id = "pz7aU7FqrywKGd45vGoO2"
 uri = "file://DualVisionAI_v1.3_Fixed.tar.gz"
 type = "unspecified"
 title = "DualVisionAI_v1.3_Fixed.tar.gz — Live Detection Fix"
+
+[[outputs]]
+id = "CAfE34OX6sjOOEaFc9XOj"
+uri = "file://DualVisionAI_v1.3_Phase2.tar.gz"
+type = "unspecified"
+title = "DualVisionAI_v1.3_Phase2.tar.gz"
