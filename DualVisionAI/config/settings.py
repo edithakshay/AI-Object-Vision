@@ -48,6 +48,15 @@ DEFAULT_SETTINGS = {
         "output_dir":       "logs",
         "csv_enabled":      True,
         "max_log_entries":  100000
+    },
+    "tracking": {
+        "enable_trails":              False,
+        "max_trail_length":           30,
+        "track_timeout":              5,
+        "min_confirmation_hits":      1,
+        "tracking_confidence":        0.45,
+        "association_threshold":      0.35,
+        "low_association_threshold":  0.20
     }
 }
 

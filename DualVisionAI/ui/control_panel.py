@@ -137,17 +137,21 @@ class ControlPanel(ctk.CTkFrame):
         trk_frame.pack(fill="x", padx=10, pady=(0, 6))
 
         self._trk_active_var    = ctk.StringVar(value="0")
+        self._trk_confirmed_var = ctk.StringVar(value="0")
         self._trk_lost_var      = ctk.StringVar(value="0")
         self._trk_recovered_var = ctk.StringVar(value="0")
         self._trk_new_var       = ctk.StringVar(value="0")
         self._trk_age_var       = ctk.StringVar(value="0.0 s")
+        self._trk_longest_var   = ctk.StringVar(value="0.0 s")
         self._trk_fps_var       = ctk.StringVar(value="0.0")
         self._trk_latency_var   = ctk.StringVar(value="0.0 ms")
         self._stat_row(trk_frame, "Active Tracks",  self._trk_active_var,    "#22C55E")
+        self._stat_row(trk_frame, "Confirmed",      self._trk_confirmed_var, "#16A34A")
         self._stat_row(trk_frame, "Lost Tracks",    self._trk_lost_var,      "#F59E0B")
         self._stat_row(trk_frame, "Recovered",      self._trk_recovered_var, "#A78BFA")
         self._stat_row(trk_frame, "New Tracks",     self._trk_new_var,       "#3B82F6")
         self._stat_row(trk_frame, "Avg Track Age",  self._trk_age_var,       "#64748B")
+        self._stat_row(trk_frame, "Longest Active", self._trk_longest_var,   "#818CF8")
         self._stat_row(trk_frame, "Tracking FPS",   self._trk_fps_var,       "#22C55E")
         self._stat_row(trk_frame, "Track Latency",  self._trk_latency_var,   "#64748B")
 
@@ -270,10 +274,12 @@ class ControlPanel(ctk.CTkFrame):
         camera_mode:    str   = "rgb",
         # Tracking stats
         trk_active:     int   = 0,
+        trk_confirmed:  int   = 0,
         trk_lost:       int   = 0,
         trk_recovered:  int   = 0,
         trk_new:        int   = 0,
         trk_avg_age:    float = 0.0,
+        trk_longest:    float = 0.0,
         trk_fps:        float = 0.0,
         trk_latency:    float = 0.0,
         trk_ids:        str   = "—",
@@ -294,10 +300,12 @@ class ControlPanel(ctk.CTkFrame):
         self._camera_var.set("RGB" if camera_mode == "rgb" else "Thermal")
         # Tracking
         self._trk_active_var.set(str(trk_active))
+        self._trk_confirmed_var.set(str(trk_confirmed))
         self._trk_lost_var.set(str(trk_lost))
         self._trk_recovered_var.set(str(trk_recovered))
         self._trk_new_var.set(str(trk_new))
         self._trk_age_var.set(f"{trk_avg_age:.1f} s")
+        self._trk_longest_var.set(f"{trk_longest:.1f} s")
         self._trk_fps_var.set(f"{trk_fps:.1f}")
         self._trk_latency_var.set(f"{trk_latency:.1f} ms")
         self._track_ids_var.set(trk_ids if trk_ids else "—")
@@ -305,10 +313,12 @@ class ControlPanel(ctk.CTkFrame):
     def update_tracking_stats(self, stats: dict):
         """Accept a dict from ByteTracker.get_stats()."""
         self._trk_active_var.set(str(stats.get("active_tracks", 0)))
+        self._trk_confirmed_var.set(str(stats.get("confirmed_tracks", 0)))
         self._trk_lost_var.set(str(stats.get("lost_tracks", 0)))
         self._trk_recovered_var.set(str(stats.get("recovered_total", 0)))
         self._trk_new_var.set(str(stats.get("new_total", 0)))
         self._trk_age_var.set(f"{stats.get('avg_age_sec', 0.0):.1f} s")
+        self._trk_longest_var.set(f"{stats.get('longest_active_sec', 0.0):.1f} s")
         self._trk_fps_var.set(f"{stats.get('tracking_fps', 0.0):.1f}")
         self._trk_latency_var.set(f"{stats.get('latency_ms', 0.0):.1f} ms")
 

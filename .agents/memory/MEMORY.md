@@ -1,0 +1,1 @@
+- [DualVisionAI tracker Phase 2](dualvision-tracker-p2.md) — Phase 2 tracking decisions: trails, events, motion, empty-frame fix, settings wiring.

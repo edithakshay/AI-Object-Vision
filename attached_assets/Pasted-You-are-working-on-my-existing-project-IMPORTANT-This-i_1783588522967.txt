@@ -1,0 +1,208 @@
+You are working on my existing project:
+IMPORTANT
+This is NOT a new project.
+Continue from the current working version.
+The application is currently stable.
+The following features are already working:
+RGB Camera
+Thermal Camera
+Single Camera Mode
+Camera Switching
+YOLO26n
+ONNX Runtime CPU
+Continuous Live Detection
+Bounding Boxes
+Confidence Scores
+Dashboard
+Detection Panel
+Performance Panel
+CSV Export
+JSON Export
+Screenshot
+Recording
+Do NOT break any of these features.
+REGRESSION PROTECTION (MANDATORY)
+Before modifying any file:
+Create a backup checkpoint:
+v1.3.0_tracking_backup
+Run regression verification:
+Verify:
+RGB detection
+Thermal detection
+Camera switching
+ONNX Runtime
+Bounding boxes
+Detection overlay
+Screenshot
+Recording
+CSV export
+JSON export
+Dashboard
+FPS
+Detection counters
+If any previously working feature breaks,
+automatically restore the previous implementation before continuing.
+Never sacrifice a working feature to implement a new one.
+OBJECTIVE
+Complete Phase 2 – Stable Object Tracking
+Detection is already working.
+Do not modify the detection pipeline unless absolutely necessary.
+Tracking must consume detection results, not replace them.
+1. Stable ByteTrack Integration
+Implement professional ByteTrack.
+Requirements:
+Stable object IDs.
+IDs must persist across frames.
+IDs must not randomly change.
+IDs should survive temporary occlusion.
+Lost object recovery.
+Re-identification.
+Track timeout configurable.
+Track confidence threshold configurable.
+2. Track History
+Maintain history for every tracked object.
+Store:
+Track ID
+Class
+Confidence
+First Seen Time
+Last Seen Time
+Track Age
+Current Position
+Previous Position
+Velocity
+Direction
+Status (Active/Lost)
+3. Motion Estimation
+Estimate:
+Object velocity
+Direction
+Pixel displacement
+Movement vector
+Display movement direction internally.
+4. Trail Lines
+Optional toggle:
+Show Track Trails
+When enabled:
+Draw previous positions.
+Maximum trail length configurable.
+Smooth rendering.
+No FPS drop.
+5. Lost Object Recovery
+If an object disappears briefly:
+Keep Track ID.
+Recover the same ID when the object returns.
+Do not create unnecessary new IDs.
+6. Track Filtering
+Ignore unstable tracks.
+Minimum frames before confirmation.
+Configurable.
+Reject noisy detections.
+7. Tracking Statistics
+Dashboard must show:
+Active Tracks
+Confirmed Tracks
+Lost Tracks
+Recovered Tracks
+New Tracks
+Track FPS
+Average Track Age
+Longest Active Track
+Tracking Latency
+8. Tracking Settings Page
+Create tracking settings.
+User configurable:
+Enable Tracking
+Enable Trails
+Maximum Trail Length
+Track Timeout
+Minimum Detection Frames
+Tracking Confidence
+Association Threshold
+Restore Defaults
+9. Tracking Logs
+Generate:
+logs/tracking.log
+Log:
+Track Created
+Track Updated
+Track Lost
+Track Recovered
+Track Removed
+Track ID Changes
+Tracking FPS
+10. Continuous Validation
+While tracking is active verify:
+Detection continues every frame.
+Bounding boxes update every frame.
+Tracking updates every frame.
+No frozen boxes.
+No stale IDs.
+No cached detections.
+11. Stress Test
+Test:
+Single chair
+Two chairs
+Multiple chairs
+Person walking
+Person leaving frame
+Person returning
+Bottle movement
+Camera shake
+Fast motion
+Slow motion
+Lighting changes
+Tracking must remain stable.
+12. Performance Requirement
+Do NOT reduce current FPS significantly.
+Maintain current ONNX Runtime CPU performance.
+Target:
+Detection continues at current speed.
+Tracking overhead minimal.
+13. UI
+Keep current UI exactly as it is.
+Do not redesign.
+Only add:
+Tracking statistics
+Tracking settings
+Trail toggle
+No existing widgets should move or disappear.
+14. Deliverables
+Generate:
+TRACKING_REPORT.md
+Include:
+Tracking algorithm
+Parameters used
+Files modified
+Performance impact
+Remaining limitations
+Generate:
+TRACKING_TEST_RESULTS.md
+Include:
+✔ Single Object
+✔ Multiple Objects
+✔ Occlusion
+✔ Re-identification
+✔ Camera Switching
+✔ Long Duration Test
+✔ FPS
+✔ Memory Usage
+FINAL ACCEPTANCE CRITERIA
+This task is complete only if:
+Continuous detection still works.
+Bounding boxes update every frame.
+ONNX Runtime remains unchanged.
+Camera switching remains stable.
+IDs remain stable.
+Tracking survives temporary occlusion.
+UI remains unchanged.
+No regression introduced.
+All existing features continue to work.
+Additional Engineering Rule (Very Important)
+Before every code change:
+Run automated regression tests.
+If any existing feature fails, stop implementation.
+Restore the previous working state.
+Apply the new feature in a safer way.
+Re-run all tests.
+Never merge code that breaks an already working feature.

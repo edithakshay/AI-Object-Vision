@@ -1,9 +1,10 @@
 """
 Settings dialog — DualVision AI v1.3 Stable CPU Edition.
-3-tab layout:
+4-tab layout:
   Tab 1: General     (RTSP URLs, Detection, Inference)
   Tab 2: ONNX / CPU  (Model info, ONNX status, CPU optimisation)
   Tab 3: Dashboard   (Live performance metrics — auto-refreshed)
+  Tab 4: Tracking    (Trail lines, track parameters, event logging)
 """
 import threading
 import time
@@ -50,12 +51,13 @@ class SettingsDialog(ctk.CTkToplevel):
             segmented_button_selected_hover_color="#1D4ED8")
         self._tabs.pack(fill="both", expand=True, padx=16, pady=0)
 
-        for name in ("General", "ONNX / CPU", "Dashboard"):
+        for name in ("General", "ONNX / CPU", "Dashboard", "Tracking"):
             self._tabs.add(name)
 
         self._build_general(self._tabs.tab("General"))
         self._build_onnx_cpu(self._tabs.tab("ONNX / CPU"))
         self._build_dashboard(self._tabs.tab("Dashboard"))
+        self._build_tracking(self._tabs.tab("Tracking"))
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=16, pady=12)
@@ -265,6 +267,81 @@ class SettingsDialog(ctk.CTkToplevel):
         ctk.CTkLabel(scroll, text="⟳ Auto-refreshes every second",
                      font=("Segoe UI", 9), text_color="#334155").pack(
                      anchor="w", pady=(4, 0))
+
+    # ── Tab 4: Tracking ────────────────────────────────────────────────────────
+    def _build_tracking(self, tab):
+        scroll = ctk.CTkScrollableFrame(tab, fg_color="transparent")
+        scroll.pack(fill="both", expand=True)
+
+        self._add_section(scroll, "Trail Lines")
+        ctk.CTkLabel(scroll,
+            text="Trail lines draw the centre-point path of each tracked\n"
+                 "object. Enabling trails has a small CPU cost (~0.5 ms/frame).",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._trk_trails = self._add_switch(
+            scroll, "Enable Trail Lines",
+            self._settings.get("tracking", "enable_trails", False))
+        self._trk_trail_len = self._add_slider(
+            scroll, "Max Trail Length (frames)",
+            float(self._settings.get("tracking", "max_trail_length", 30)),
+            5.0, 80.0)
+
+        self._add_section(scroll, "Track Parameters")
+        ctk.CTkLabel(scroll,
+            text="Changes take effect the next time detection is started\n"
+                 "(click Stop → Start to apply).",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+        self._trk_timeout = self._add_slider(
+            scroll, "Track Timeout (missed frames before removal)",
+            float(self._settings.get("tracking", "track_timeout", 5)),
+            1.0, 30.0)
+        self._trk_min_hits = self._add_option(
+            scroll, "Min Confirmation Frames",
+            ["1", "2", "3", "4", "5"],
+            str(self._settings.get("tracking", "min_confirmation_hits", 1)))
+        self._trk_assoc = self._add_slider(
+            scroll, "Association IoU Threshold",
+            float(self._settings.get("tracking", "association_threshold", 0.35)),
+            0.10, 0.80)
+        self._trk_conf_split = self._add_slider(
+            scroll, "Confidence Split (high vs low)",
+            float(self._settings.get("tracking", "tracking_confidence", 0.45)),
+            0.10, 0.95)
+
+        self._add_section(scroll, "Tracking Log")
+        ctk.CTkLabel(scroll,
+            text="Track lifecycle events (created / lost / recovered / removed)\n"
+                 "are written to logs/tracking.log when detection is running.",
+            font=("Segoe UI", 9), text_color="#64748B",
+            justify="left", wraplength=540).pack(anchor="w", pady=(0, 6))
+
+        restore_btn = ctk.CTkButton(
+            scroll, text="Restore Tracking Defaults",
+            fg_color="#1E293B", hover_color="#334155",
+            height=30, command=self._restore_tracking_defaults)
+        restore_btn.pack(anchor="w", pady=(4, 8))
+
+    def _restore_tracking_defaults(self):
+        defaults = {
+            "enable_trails":              False,
+            "max_trail_length":           30,
+            "track_timeout":              5,
+            "min_confirmation_hits":      1,
+            "tracking_confidence":        0.45,
+            "association_threshold":      0.35,
+            "low_association_threshold":  0.20,
+        }
+        try:
+            self._trk_trails.set(False)
+            self._trk_trail_len.set(defaults["max_trail_length"])
+            self._trk_timeout.set(defaults["track_timeout"])
+            self._trk_min_hits.set(str(defaults["min_confirmation_hits"]))
+            self._trk_assoc.set(defaults["association_threshold"])
+            self._trk_conf_split.set(defaults["tracking_confidence"])
+        except Exception:
+            pass
 
     # ── Download / Export ──────────────────────────────────────────────────────
     def _on_download(self):
@@ -489,6 +566,22 @@ class SettingsDialog(ctk.CTkToplevel):
             try:
                 self._settings.set("inference", "cpu_threads",
                                    int(self._cpu_threads.get()))
+            except Exception:
+                pass
+            # Tracking tab
+            try:
+                self._settings.set("tracking", "enable_trails",
+                                   bool(self._trk_trails.get()))
+                self._settings.set("tracking", "max_trail_length",
+                                   int(float(self._trk_trail_len.get())))
+                self._settings.set("tracking", "track_timeout",
+                                   int(float(self._trk_timeout.get())))
+                self._settings.set("tracking", "min_confirmation_hits",
+                                   int(self._trk_min_hits.get()))
+                self._settings.set("tracking", "association_threshold",
+                                   float(self._trk_assoc.get()))
+                self._settings.set("tracking", "tracking_confidence",
+                                   float(self._trk_conf_split.get()))
             except Exception:
                 pass
             self._settings.save()

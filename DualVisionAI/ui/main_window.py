@@ -30,7 +30,7 @@ from camera.stream import RTSPStream, StreamStatus
 from ai.detector import Detector, draw_detections, DetectionResult
 from ai.model_manager import ModelManager
 from ai.backend_manager import BackendManager
-from tracking.tracker import ByteTracker
+from tracking.tracker import ByteTracker, draw_trails
 from utils.screenshot import ScreenshotUtil
 from utils.recorder import VideoRecorder
 from utils.detection_log import DetectionLog
@@ -140,8 +140,26 @@ class MainWindow(ctk.CTk):
         self._model_manager = ModelManager(model_dir="models")
         self._detector: Detector | None = None
 
-        self._rgb_tracker     = ByteTracker(max_age=5, iou_threshold=0.35)
-        self._thermal_tracker = ByteTracker(max_age=5, iou_threshold=0.35)
+        self._rgb_tracker     = self._make_tracker()
+        self._thermal_tracker = self._make_tracker()
+
+        # ── Tracking event logger ─────────────────────────────────────────────
+        import os
+        _log_dir = s.get("logging", "output_dir", "logs")
+        os.makedirs(_log_dir, exist_ok=True)
+        _trk_handler = logging.FileHandler(
+            os.path.join(_log_dir, "tracking.log"), mode="a", encoding="utf-8")
+        _trk_handler.setFormatter(logging.Formatter(
+            "%(asctime)s  %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        _trk_handler.setLevel(logging.INFO)
+        self._trk_logger = logging.getLogger("DualVisionAI.tracking_events")
+        if not self._trk_logger.handlers:
+            self._trk_logger.addHandler(_trk_handler)
+        self._trk_logger.setLevel(logging.INFO)
+        self._trk_logger.propagate = False
+
+        self._rgb_tracker.set_event_callback(self._on_tracking_event)
+        self._thermal_tracker.set_event_callback(self._on_tracking_event)
 
         self._screenshot_util = ScreenshotUtil(
             output_dir=s.get("screenshots", "output_dir", "screenshots"))
@@ -154,6 +172,41 @@ class MainWindow(ctk.CTk):
 
         self._worker_running = False
         self._ui_running     = False
+
+    # ── Tracker factory ───────────────────────────────────────────────────────
+    def _make_tracker(self) -> ByteTracker:
+        """Create a ByteTracker from current tracking settings."""
+        ts = self._settings.section("tracking")
+        return ByteTracker(
+            max_age=int(ts.get("track_timeout", 5)),
+            min_hits=int(ts.get("min_confirmation_hits", 1)),
+            iou_threshold=float(ts.get("association_threshold", 0.35)),
+            low_iou=float(ts.get("low_association_threshold", 0.20)),
+            high_conf=float(ts.get("tracking_confidence", 0.45)),
+            max_trail_length=int(ts.get("max_trail_length", 30)),
+        )
+
+    # ── Tracking event callback ───────────────────────────────────────────────
+    def _on_tracking_event(self, event_type: str, track):
+        """Write track lifecycle events to logs/tracking.log."""
+        try:
+            det = self._detector
+            names = det.class_names if det else []
+            name = names[track.class_id] if track.class_id < len(names) else "?"
+            vx, vy = track.velocity
+            speed = (vx ** 2 + vy ** 2) ** 0.5
+            self._trk_logger.info(
+                f"{event_type.upper():<10}  "
+                f"Track#{track.track_id:4d}  "
+                f"class={name:<12}  "
+                f"hits={track.hits:3d}  "
+                f"age={track.track_age_sec:5.1f}s  "
+                f"spd={speed:4.1f}px  "
+                f"dir={track.direction:<12}  "
+                f"box=({track.box[0]:.0f},{track.box[1]:.0f},"
+                f"{track.box[2]:.0f},{track.box[3]:.0f})")
+        except Exception:
+            pass
 
     # ── Window ────────────────────────────────────────────────────────────────
     def _build_window(self):
@@ -420,9 +473,14 @@ class MainWindow(ctk.CTk):
 
         track = self._settings.get("detection", "enable_tracking", True)
 
+        enable_trails = (track and
+                         self._settings.get("tracking", "enable_trails", False))
+
         if mode == "rgb":
             self._process_result(frame, "rgb", track)
             display = draw_detections(frame, self._rgb_draw_result) if frame is not None else None
+            if display is not None and enable_trails:
+                display = draw_trails(display, self._rgb_tracker.get_trails())
             if display is not None and self._recorder.is_recording("RGB"):
                 self._recorder.write("RGB", display)
             if display is not None:
@@ -431,6 +489,8 @@ class MainWindow(ctk.CTk):
         else:
             self._process_result(frame, "thermal", track)
             display = draw_detections(frame, self._thermal_draw_result) if frame is not None else None
+            if display is not None and enable_trails:
+                display = draw_trails(display, self._thermal_tracker.get_trails())
             if display is not None and self._recorder.is_recording("Thermal"):
                 self._recorder.write("Thermal", display)
             if display is not None:
@@ -456,8 +516,9 @@ class MainWindow(ctk.CTk):
 
         if result.is_empty():
             if enable_tracking:
+                # Age tracks naturally — do NOT reset; preserves re-identification
                 (self._rgb_tracker if stream == "rgb"
-                 else self._thermal_tracker).reset()
+                 else self._thermal_tracker).update([])
             if stream == "rgb":
                 self._rgb_draw_result = None
             else:
@@ -609,10 +670,12 @@ class MainWindow(ctk.CTk):
             session_total=self._session_detection_count,
             camera_mode=mode,
             trk_active=trk_stats["active_tracks"],
+            trk_confirmed=trk_stats["confirmed_tracks"],
             trk_lost=trk_stats["lost_tracks"],
             trk_recovered=trk_stats["recovered_total"],
             trk_new=trk_stats["new_total"],
             trk_avg_age=trk_stats["avg_age_sec"],
+            trk_longest=trk_stats["longest_active_sec"],
             trk_fps=trk_stats["tracking_fps"],
             trk_latency=trk_stats["latency_ms"],
             trk_ids=ids_str,
@@ -719,8 +782,11 @@ class MainWindow(ctk.CTk):
                 self._display_fps_timer   = time.time()
                 self._display_fps         = 0.0
                 self._frozen_cap_fps      = 0.0
-                self._rgb_tracker.reset()
-                self._thermal_tracker.reset()
+                # Re-create trackers so any changed tracking settings take effect
+                self._rgb_tracker     = self._make_tracker()
+                self._thermal_tracker = self._make_tracker()
+                self._rgb_tracker.set_event_callback(self._on_tracking_event)
+                self._thermal_tracker.set_event_callback(self._on_tracking_event)
                 self._rgb_draw_result      = None
                 self._thermal_draw_result  = None
                 self._rgb_last_inf_ts      = 0.0
