@@ -31,6 +31,7 @@ from ai.detector import Detector, draw_detections, DetectionResult
 from ai.model_manager import ModelManager
 from ai.backend_manager import BackendManager
 from tracking.tracker import ByteTracker, draw_trails
+from ai.confidence_smoother import ConfidenceSmoother
 from utils.screenshot import ScreenshotUtil
 from utils.recorder import VideoRecorder
 from utils.detection_log import DetectionLog
@@ -42,6 +43,7 @@ from ui.camera_panel import CameraPanel
 from ui.control_panel import ControlPanel
 from ui.settings_dialog import SettingsDialog
 from ui.about_dialog import AboutDialog
+from ui.debug_dashboard import DebugDashboard
 
 logger    = logging.getLogger("DualVisionAI.mainwindow")
 fps_logger = logging.getLogger("DualVisionAI.fps")
@@ -79,6 +81,8 @@ class MainWindow(ctk.CTk):
         self._rgb_display_frame     = None
         self._thermal_display_frame = None
         self._frame_lock = threading.Lock()
+
+        self._debug_dashboard: DebugDashboard | None = None
 
         self._pending_log: list[tuple] = []
         self._log_lock = threading.Lock()
@@ -143,6 +147,9 @@ class MainWindow(ctk.CTk):
         self._rgb_tracker     = self._make_tracker()
         self._thermal_tracker = self._make_tracker()
 
+        self._rgb_smoother     = self._make_smoother()
+        self._thermal_smoother = self._make_smoother()
+
         # ── Tracking event logger ─────────────────────────────────────────────
         import os
         _log_dir = s.get("logging", "output_dir", "logs")
@@ -184,6 +191,21 @@ class MainWindow(ctk.CTk):
             low_iou=float(ts.get("low_association_threshold", 0.10)),
             high_conf=float(ts.get("tracking_confidence", 0.40)),
             max_trail_length=int(ts.get("max_trail_length", 30)),
+            persistence_frames=int(ts.get("persistence_frames", 5)),
+        )
+
+    # ── Smoother factory ──────────────────────────────────────────────────────
+    def _make_smoother(self) -> ConfidenceSmoother:
+        """Create a ConfidenceSmoother from current smoothing settings."""
+        sm = self._settings.section("smoothing")
+        return ConfidenceSmoother(
+            ema_alpha=float(sm.get("ema_alpha", 0.35)),
+            iou_threshold=float(sm.get("iou_threshold", 0.40)),
+            max_ghost_frames=int(sm.get("max_ghost_frames", 3)),
+            ghost_decay=float(sm.get("ghost_decay", 0.70)),
+            min_ghost_conf=float(sm.get("min_ghost_conf", 0.25)),
+            min_box_area=int(sm.get("min_box_area", 0)),
+            max_box_area=int(sm.get("max_box_area", 0)),
         )
 
     # ── Tracking event callback ───────────────────────────────────────────────
@@ -259,6 +281,7 @@ class MainWindow(ctk.CTk):
             "export_json":  self._on_export_json,
             "about":        self._on_about,
             "exit":         self._on_exit,
+            "debug":        self._on_debug,
         }
         self._toolbar = Toolbar(self, callbacks=callbacks)
         self._toolbar.pack(fill="x", side="top")
@@ -553,6 +576,13 @@ class MainWindow(ctk.CTk):
                 dets = [{"box": b, "class_id": c, "confidence": cf}
                         for b, c, cf in zip(result.boxes, result.class_ids,
                                             result.confidences)]
+                # ── Confidence smoother — sits UPSTREAM of the tracker ────────
+                # Applies EMA smoothing and synthesises ghost detections for
+                # recently-seen objects to prevent 1–3 frame disappearances.
+                if self._settings.get("smoothing", "enable_smoother", True):
+                    smoother = (self._rgb_smoother if stream == "rgb"
+                                else self._thermal_smoother)
+                    dets = smoother.process(dets)
                 tracked = tracker.update(dets)
 
                 if tracked:
@@ -702,47 +732,124 @@ class MainWindow(ctk.CTk):
                          else self._thermal_stream.status.value)
         rgb_s    = active_status if mode == "rgb"     else "Inactive"
         therm_s  = active_status if mode == "thermal" else "Inactive"
+        active_variant = self._settings.get("inference", "active_model", "yolo26n")
         self._statusbar.update(
-            fps=fps_inf, model="YOLO26n", device="CPU",
+            fps=fps_inf, model=active_variant.upper(), device="CPU",
             detecting=self._detecting,
             rgb_status=rgb_s, thermal_status=therm_s,
             timestamp=datetime.now().strftime("%H:%M:%S"))
+
+        # ── Feed Debug Dashboard if open ──────────────────────────────────────
+        if (self._debug_dashboard is not None and
+                self._debug_dashboard.winfo_exists()):
+            try:
+                smoother    = (self._rgb_smoother if mode == "rgb"
+                               else self._thermal_smoother)
+                tracker_obj = (self._rgb_tracker if mode == "rgb"
+                               else self._thermal_tracker)
+                active_result = (self._rgb_draw_result if mode == "rgb"
+                                 else self._thermal_draw_result)
+
+                # Build per-object list from the active result
+                tracked_objs = []
+                if active_result:
+                    for _i in range(len(active_result.boxes)):
+                        tracked_objs.append({
+                            "track_id":        (active_result.track_ids[_i]
+                                                if _i < len(active_result.track_ids) else 0),
+                            "class_id":        (active_result.class_ids[_i]
+                                                if _i < len(active_result.class_ids) else 0),
+                            "confidence":      (active_result.confidences[_i]
+                                                if _i < len(active_result.confidences) else 0.0),
+                            "direction":       "—",
+                            "age_sec":         0.0,
+                            "hits":            1,
+                            "lost_count":      0,
+                            "recovered_count": 0,
+                            "ghost":           (active_result.ghost_flags[_i]
+                                                if _i < len(active_result.ghost_flags) else False),
+                        })
+
+                sm_stats  = smoother.get_stats()
+                trk_stats = tracker_obj.get_stats()
+                confs     = [o["confidence"] for o in tracked_objs if not o["ghost"]]
+                avg_conf  = sum(confs) / len(confs) if confs else 0.0
+
+                import psutil as _ps
+                self._debug_dashboard.update_data({
+                    "fps_inf":          det.fps_inference   if det else 0.0,
+                    "avg_fps":          det.avg_fps          if det else 0.0,
+                    "inf_ms":           det.infer_ms         if det else 0.0,
+                    "pre_ms":           det.preprocess_ms    if det else 0.0,
+                    "post_ms":          det.postprocess_ms   if det else 0.0,
+                    "frame_drops":      det.frame_drops      if det else 0,
+                    "cpu_pct":          _ps.cpu_percent(interval=None),
+                    "ram_mb":           _ps.virtual_memory().used // (1024 * 1024),
+                    "model_name":       active_variant,
+                    "input_size":       self._settings.get("detection", "input_width", 640),
+                    "num_classes":      len(det.class_names) if det else 0,
+                    "avg_conf":         avg_conf,
+                    "tracker_stats":    trk_stats,
+                    "tracked_objects":  tracked_objs,
+                    "class_names":      ({i: n for i, n in enumerate(det.class_names)}
+                                        if det else {}),
+                    "smoother_stats":   sm_stats,
+                    "smoother_avg_conf": sm_stats.get("avg_smooth_conf", 0.0),
+                    "trk_ghost":        tracker_obj.get_ghost_count(),
+                    "trk_lifetime_avg": trk_stats.get("avg_age_sec", 0.0),
+                    "trk_id_changes":   0,
+                    "trk_lost":         trk_stats.get("lost_tracks", 0),
+                    "conf_current":     avg_conf,
+                })
+            except Exception:
+                pass
 
     # ── Actions ───────────────────────────────────────────────────────────────
     def _on_start(self):
         if self._detecting:
             return
 
-        s          = self._settings
-        conf       = s.get("detection", "confidence",  0.45)
-        iou_val    = s.get("detection", "iou",         0.45)
-        input_size = s.get("detection", "input_width", 640)
-        frame_skip = s.get("detection", "frame_skip",  1)
-        cpu_th     = s.get("inference", "cpu_threads", 0)
+        s            = self._settings
+        conf         = s.get("detection", "confidence",    0.45)
+        iou_val      = s.get("detection", "iou",           0.45)
+        input_size   = s.get("detection", "input_width",   640)
+        frame_skip   = s.get("detection", "frame_skip",    1)
+        cpu_th       = s.get("inference", "cpu_threads",   0)
+        active_model = s.get("inference", "active_model",  "yolo26n")
 
         def _load_and_start():
             try:
+                # ── Select model variant ──────────────────────────────────────
+                try:
+                    self._model_manager.set_variant(active_model)
+                except ValueError:
+                    self._model_manager.set_variant("yolo26n")
+                variant_info = self._model_manager.get_model_info()
+                pt_name   = variant_info["name"]
+                onnx_name = f"{active_model}.onnx"
+
                 # ── Ensure .pt ───────────────────────────────────────────────
                 if not self._model_manager.is_pt_ready():
                     self.after(0, messagebox.showinfo, "Downloading Model",
-                               "yolo26n.pt not found locally.\n\n"
-                               "Ultralytics will download it (~6 MB).\n"
-                               "Internet is required only this once.\n\n"
+                               f"{pt_name} not found locally.\n\n"
+                               f"Ultralytics will download it "
+                               f"(~{variant_info.get('pt_mb', '?')} MB or less).\n"
+                               "Internet is required only this one time.\n\n"
                                "Click OK — detection will start once the "
                                "download completes.")
 
                 # ── Ensure .onnx ──────────────────────────────────────────────
                 if not self._model_manager.is_onnx_ready():
-                    self.after(0, lambda: logger.info(
-                        "Exporting YOLO26n to ONNX …"))
+                    self.after(0, lambda n=onnx_name: logger.info(
+                        f"Exporting {n} …"))
                     try:
                         self._model_manager.export_onnx()
                     except Exception as exc:
                         tb = traceback.format_exc()
-                        def _show_err(e=str(exc), t=tb):
+                        def _show_err(e=str(exc), t=tb, n=onnx_name):
                             messagebox.showerror(
                                 "ONNX Export Failed",
-                                f"Could not export yolo26n.onnx:\n\n{e}\n\n"
+                                f"Could not export {n}:\n\n{e}\n\n"
                                 "Full traceback written to logs/inference.log.\n\n"
                                 "Fix the error and click Start again.")
                         self.after(0, _show_err)
@@ -752,7 +859,7 @@ class MainWindow(ctk.CTk):
                 onnx_path = self._model_manager.get_onnx_path()
                 if not self._model_manager.is_onnx_ready():
                     self.after(0, messagebox.showerror, "Model Error",
-                               "yolo26n.onnx not found.\n\n"
+                               f"{onnx_name} not found.\n\n"
                                "Run Setup → Export to ONNX, then try again.")
                     return
 
@@ -796,6 +903,9 @@ class MainWindow(ctk.CTk):
                 self._thermal_tracker = self._make_tracker()
                 self._rgb_tracker.set_event_callback(self._on_tracking_event)
                 self._thermal_tracker.set_event_callback(self._on_tracking_event)
+                # Re-create smoothers from current Optimization settings
+                self._rgb_smoother     = self._make_smoother()
+                self._thermal_smoother = self._make_smoother()
                 self._rgb_draw_result      = None
                 self._thermal_draw_result  = None
                 self._rgb_last_inf_ts      = 0.0
@@ -807,7 +917,8 @@ class MainWindow(ctk.CTk):
                 self._detector.start()
 
                 logger.info(
-                    f"Detection started — model=yolo26n.onnx  "
+                    f"Detection started — model={onnx_path.name}  "
+                    f"variant={active_model}  "
                     f"backend=ONNX Runtime CPU  "
                     f"provider=CPUExecutionProvider  "
                     f"camera={self._camera_mode}  "
@@ -845,6 +956,8 @@ class MainWindow(ctk.CTk):
         self._display_frame_count = 0   # prevents stale partial-window math
         self._rgb_tracker.reset()
         self._thermal_tracker.reset()
+        self._rgb_smoother.reset()
+        self._thermal_smoother.reset()
         self._rgb_draw_result      = None
         self._thermal_draw_result  = None
         self._rgb_last_inf_ts      = 0.0
@@ -946,6 +1059,19 @@ class MainWindow(ctk.CTk):
 
     def _on_about(self):
         AboutDialog(self)
+
+    def _on_debug(self):
+        """Open or focus the Debug Dashboard floating window."""
+        try:
+            if (self._debug_dashboard is None or
+                    not self._debug_dashboard.winfo_exists()):
+                self._debug_dashboard = DebugDashboard(self)
+                self._debug_dashboard.lift()
+            else:
+                self._debug_dashboard.lift()
+                self._debug_dashboard.focus_force()
+        except Exception as exc:
+            logger.warning(f"Debug dashboard error: {exc}")
 
     def _on_stream_reconnect(self, name: str):
         """Called by RTSPStream each time it successfully (re)connects.
