@@ -10,7 +10,7 @@ import threading
 import time
 import customtkinter as ctk
 from config.settings import Settings
-from ai.model_manager import ModelManager, MODEL_NAME, MODEL_VERSION
+from ai.model_manager import ModelManager, MODEL_NAME, MODEL_VERSION, MODEL_VARIANTS
 
 
 class SettingsDialog(ctk.CTkToplevel):
@@ -153,16 +153,16 @@ class SettingsDialog(ctk.CTkToplevel):
 
         # Download
         self._add_section(scroll, "Download Model")
-        ctk.CTkLabel(scroll,
-            text=f"Downloads {MODEL_NAME} once (~{6} MB).\n"
-                 "Internet required only this one time.",
+        self._dl_desc_lbl = ctk.CTkLabel(scroll,
+            text="",
             font=("Segoe UI", 9), text_color="#64748B",
-            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+            justify="left", wraplength=540)
+        self._dl_desc_lbl.pack(anchor="w", pady=(0, 4))
 
         dl_row = ctk.CTkFrame(scroll, fg_color="transparent")
         dl_row.pack(fill="x", pady=(0, 4))
         self._dl_btn = ctk.CTkButton(
-            dl_row, text="⬇  Download YOLO26n", width=180,
+            dl_row, text="⬇  Download Model", width=180,
             fg_color="#1E3A5F", hover_color="#334155",
             height=30, command=self._on_download)
         self._dl_btn.pack(side="left")
@@ -178,12 +178,11 @@ class SettingsDialog(ctk.CTkToplevel):
 
         # ONNX Export
         self._add_section(scroll, "Export ONNX")
-        ctk.CTkLabel(scroll,
-            text="Exports yolo26n.pt → yolo26n.onnx.\n"
-                 "PyTorch is used only during export — never during inference.\n"
-                 "Export runs automatically on first Start.",
+        self._exp_desc_lbl = ctk.CTkLabel(scroll,
+            text="",
             font=("Segoe UI", 9), text_color="#64748B",
-            justify="left", wraplength=540).pack(anchor="w", pady=(0, 4))
+            justify="left", wraplength=540)
+        self._exp_desc_lbl.pack(anchor="w", pady=(0, 4))
         self._export_btn = ctk.CTkButton(
             scroll, text="Export to ONNX Now",
             fg_color="#1E3A5F", hover_color="#334155",
@@ -226,7 +225,8 @@ class SettingsDialog(ctk.CTkToplevel):
         be_frame.pack(fill="x", pady=(0, 8))
         self._d_backend   = ctk.StringVar(value="ONNX Runtime CPU")
         self._d_provider  = ctk.StringVar(value="CPUExecutionProvider")
-        self._d_model     = ctk.StringVar(value="YOLO26n")
+        active_key = self._settings.get("inference", "active_model", "yolo26n")
+        self._d_model     = ctk.StringVar(value=MODEL_VARIANTS.get(active_key, MODEL_VARIANTS["yolo26n"])["label"])
         self._d_device    = ctk.StringVar(value="CPU")
         self._d_onnx_st   = ctk.StringVar(value="—")
         self._d_model_ld  = ctk.StringVar(value="No")
@@ -362,6 +362,9 @@ class SettingsDialog(ctk.CTkToplevel):
                           button_hover_color="#1D4ED8",
                           font=("Segoe UI", 10)).pack(
                           anchor="w", pady=(0, 8))
+        # Keep ONNX/CPU tab in sync whenever the user changes the model dropdown
+        self._opt_model_var.trace_add(
+            "write", lambda *_: self.after(60, self._refresh_onnx_tab))
 
         # ── Confidence Smoother ──────────────────────────────────────────────
         self._add_section(scroll, "Confidence Smoother")
@@ -464,20 +467,39 @@ class SettingsDialog(ctk.CTkToplevel):
         except Exception:
             pass
 
+    # ── Variant helper ─────────────────────────────────────────────────────────
+    def _get_active_variant(self) -> str:
+        """Return the variant key currently selected in the Optimization dropdown."""
+        from ai.model_manager import MODEL_VARIANTS
+        try:
+            sel_label = self._opt_model_var.get()
+            key = next(
+                (k for k, v in MODEL_VARIANTS.items() if v["label"] == sel_label),
+                None)
+            if key:
+                return key
+        except AttributeError:
+            pass
+        return self._settings.get("inference", "active_model", "yolo26n")
+
     # ── Download / Export ──────────────────────────────────────────────────────
     def _on_download(self):
-        self._dl_btn.configure(state="disabled", text="Downloading …")
+        variant = self._get_active_variant()
+        self._model_mgr.set_variant(variant)
+        label = variant.upper()
+        self._dl_btn.configure(state="disabled", text=f"Downloading {label} …")
         self._dl_status.configure(text="Starting …", text_color="#94A3B8")
         self._model_mgr.set_callbacks(
             progress=self._on_dl_progress, status=self._on_dl_status)
-        threading.Thread(target=self._do_download, daemon=True).start()
+        threading.Thread(target=lambda v=variant: self._do_download(v),
+                         daemon=True).start()
 
-    def _do_download(self):
-        self._model_mgr.ensure_pt(blocking=True)
+    def _do_download(self, variant: str):
+        self._model_mgr.ensure_pt(blocking=True, variant=variant)
         try:
             self.after(0, self._refresh_onnx_tab)
-            self.after(0, lambda: self._dl_btn.configure(
-                state="normal", text="⬇  Download YOLO26n"))
+            self.after(0, lambda v=variant: self._dl_btn.configure(
+                state="normal", text=f"⬇  Download {v.upper()}"))
         except Exception:
             pass
 
@@ -491,13 +513,16 @@ class SettingsDialog(ctk.CTkToplevel):
         except Exception: pass
 
     def _on_export(self):
+        variant = self._get_active_variant()
+        self._model_mgr.set_variant(variant)
         self._export_btn.configure(state="disabled", text="Exporting …")
         self._export_status.configure(
-            text="Exporting — may take 30–60 s …", text_color="#F59E0B")
+            text=f"Exporting {variant.upper()} — may take 30–60 s …",
+            text_color="#F59E0B")
 
-        def _do():
+        def _do(v=variant):
             try:
-                result = self._model_mgr.export_onnx()
+                result = self._model_mgr.export_onnx(variant=v)
                 def _ok():
                     self._export_btn.configure(
                         state="normal", text="Export to ONNX Now")
@@ -525,25 +550,52 @@ class SettingsDialog(ctk.CTkToplevel):
     # ── Refresh helpers ────────────────────────────────────────────────────────
     def _refresh_onnx_tab(self):
         try:
+            from ai.model_manager import MODEL_VARIANTS
+            # ── Determine the variant currently selected in the UI ──────────
+            variant  = self._get_active_variant()
+            vlabel   = variant.upper()          # e.g. "YOLO26M"
+            vmeta    = MODEL_VARIANTS.get(variant, MODEL_VARIANTS["yolo26n"])
+            pt_fname = f"{variant}.pt"
+            ox_fname = f"{variant}.onnx"
+
+            # Approximate PT sizes (MB) per variant for the description label
+            _pt_sizes = {
+                "yolo26n": 6, "yolo26s": 22, "yolo26m": 52,
+                "yolo26l": 87, "yolo26x": 136,
+            }
+            approx_mb = _pt_sizes.get(variant, "?")
+
+            # Update description labels to reflect the selected model
+            self._dl_desc_lbl.configure(
+                text=f"Downloads {pt_fname} once (~{approx_mb} MB).\n"
+                     "Internet required only this one time.")
+            self._exp_desc_lbl.configure(
+                text=f"Exports {pt_fname} → {ox_fname}.\n"
+                     "PyTorch is used only during export — never during inference.\n"
+                     "Export runs automatically on first Start.")
+
+            # Point model_mgr at the selected variant before reading status
+            self._model_mgr.set_variant(variant)
             info = self._model_mgr.get_model_info()
-            self._m_name_var.set(info["name"])
-            self._m_ver_var.set(info["version"])
+
+            self._m_name_var.set(vmeta["label"])
+            self._m_ver_var.set(info.get("version", MODEL_VERSION))
             self._m_pt_var.set("Ready ✓" if info["pt_ready"] else "Not downloaded")
             self._m_onnx_var.set("Ready ✓" if info["onnx_ready"] else "Not exported")
             self._m_pt_mb_var.set(f"{info['pt_mb']} MB" if info['pt_mb'] else "—")
             self._m_onnx_mb_var.set(f"{info['onnx_mb']} MB" if info['onnx_mb'] else "—")
 
-            # Update download button state
+            # Update download button and status to match selected model
             if info["pt_ready"]:
                 self._dl_btn.configure(
-                    state="disabled", text="✓ Already Downloaded")
+                    state="disabled", text=f"✓ {vlabel} Downloaded")
                 self._dl_status.configure(
-                    text="yolo26n.pt is ready.", text_color="#22C55E")
+                    text=f"{pt_fname} is ready.", text_color="#22C55E")
             else:
                 self._dl_btn.configure(
-                    state="normal", text="⬇  Download YOLO26n")
+                    state="normal", text=f"⬇  Download {vlabel}")
                 self._dl_status.configure(
-                    text="yolo26n.pt not found — click Download.",
+                    text=f"{pt_fname} not found — click Download.",
                     text_color="#F59E0B")
 
             # Backend diagnostics
@@ -579,7 +631,9 @@ class SettingsDialog(ctk.CTkToplevel):
         # Static backend (always CPU)
         self._d_backend.set("ONNX Runtime CPU")
         self._d_provider.set("CPUExecutionProvider")
-        self._d_model.set("YOLO26n")
+        # Show whichever variant is currently active
+        _ak = self._settings.get("inference", "active_model", "yolo26n")
+        self._d_model.set(MODEL_VARIANTS.get(_ak, MODEL_VARIANTS["yolo26n"])["label"])
         self._d_device.set("CPU")
 
         if det is not None:
