@@ -96,6 +96,8 @@ class Toolbar(ctk.CTkFrame):
 
         self._btn(left, "⚙ Settings", "#1E3A5F", "#334155",
                   lambda: self._call("settings"))
+        self._btn(left, "🗂 Models",  "#1E2A3A", "#1E3A5F",
+                  lambda: self._call("model_manager"))
         self._btn(left, "🔍 Debug",   "#1E2A3A", "#1E3A5F",
                   lambda: self._call("debug"))
 

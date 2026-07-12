@@ -15,11 +15,32 @@ Backward compatibility:
 """
 
 import logging
+import shutil
 import threading
 import traceback
 from pathlib import Path
 
 logger = logging.getLogger("DualVisionAI.model")
+
+
+def _setup_model_log():
+    """Attach a dedicated file handler to logs/model_manager.log (PART 12)."""
+    try:
+        log_dir = Path("logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_dir / "model_manager.log", encoding="utf-8")
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s  %(levelname)-8s  %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"))
+        fh.setLevel(logging.DEBUG)
+        logger.addHandler(fh)
+        if not logger.level or logger.level > logging.DEBUG:
+            logger.setLevel(logging.DEBUG)
+    except Exception:
+        pass
+
+
+_setup_model_log()
 
 # ── Model registry ─────────────────────────────────────────────────────────────
 # Keys are the variant suffix (also the user-visible display name).
@@ -184,6 +205,162 @@ class ModelManager:
             "pt_ready":   self.is_pt_ready(v),
             "onnx_ready": self.is_onnx_ready(v),
         }
+
+    # ── Import local file (PART 3) ────────────────────────────────────────────
+    def import_local(self, src_path: str,
+                     status_cb=None) -> tuple:
+        """
+        Copy a local .pt or .onnx file into models/.
+        Returns (success: bool, message: str).
+
+        Validation rules (PART 10):
+          - File must exist and be readable
+          - Extension must be .pt or .onnx
+          - Filename must identify a known YOLO26 variant
+          - ONNX files are validated via ONNX Runtime before import
+        """
+        src = Path(src_path)
+
+        def _status(msg):
+            logger.info(f"[IMPORT] {msg}")
+            if status_cb:
+                try: status_cb(msg)
+                except Exception: pass
+
+        # ── Basic checks ──────────────────────────────────────────────────────
+        if not src.exists():
+            msg = f"File not found: {src}"
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        try:
+            sz = src.stat().st_size
+        except OSError as exc:
+            msg = f"Cannot read file: {exc}"
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        if sz < 1_000:
+            msg = f"File too small ({sz} bytes) — possibly corrupted: {src.name}"
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        ext = src.suffix.lower()
+        if ext not in (".pt", ".onnx"):
+            msg = (f"Unsupported format '{ext}'.  "
+                   f"Accepted: .pt (PyTorch) or .onnx")
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        # ── Identify variant from filename ────────────────────────────────────
+        stem = src.stem.lower()
+        variant = None
+        for k in MODEL_VARIANTS:
+            if k in stem or stem in (k, k + "_onnx"):
+                variant = k
+                break
+        if variant is None:
+            msg = (f"Cannot identify YOLO26 variant from '{src.name}'.\n"
+                   f"Rename the file to include the variant name, e.g.:\n"
+                   f"  yolo26n.pt  yolo26s.onnx  yolo26m.pt  …")
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        # ── ONNX architecture validation (PART 10) ────────────────────────────
+        if ext == ".onnx":
+            _status(f"Validating ONNX architecture for {src.name} …")
+            ok, vmsg = self._validate_onnx_file(src)
+            if not ok:
+                msg = f"ONNX validation failed: {vmsg}"
+                logger.error(f"[IMPORT] {msg}")
+                return False, msg
+
+        # ── Copy ──────────────────────────────────────────────────────────────
+        meta = MODEL_VARIANTS[variant]
+        dest = self.model_dir / (meta["pt_name"] if ext == ".pt"
+                                 else meta["onnx_name"])
+        _status(f"Copying {src.name} → models/{dest.name} …")
+        try:
+            shutil.copy2(str(src), str(dest))
+        except Exception as exc:
+            msg = f"Copy failed: {exc}"
+            logger.error(f"[IMPORT] {msg}")
+            return False, msg
+
+        mb = dest.stat().st_size / 1_048_576
+        msg = f"Imported {dest.name}  ({mb:.1f} MB)  variant={variant}"
+        _status(msg)
+        return True, msg
+
+    # ── Validation (PART 10) ─────────────────────────────────────────────────
+    def validate_model(self, variant: str | None = None) -> tuple:
+        """
+        Validate installed files for a given variant.
+        Returns (ok: bool, message: str).
+        Checks: file exists, readable, size, ONNX architecture.
+        """
+        v = variant or self._variant
+        issues = []
+
+        onnx_p = self.get_onnx_path(v)
+        pt_p   = self.get_pt_path(v)
+
+        # PT check
+        if pt_p.exists():
+            if pt_p.stat().st_size < 100_000:
+                issues.append(
+                    f".pt file too small ({pt_p.stat().st_size} bytes) — may be corrupted")
+        # ONNX check
+        if onnx_p.exists():
+            if onnx_p.stat().st_size < 100_000:
+                issues.append(
+                    f"ONNX file too small ({onnx_p.stat().st_size} bytes) — may be corrupted")
+            else:
+                ok, vmsg = self._validate_onnx_file(onnx_p)
+                if not ok:
+                    issues.append(f"ONNX invalid: {vmsg}")
+
+        if not pt_p.exists() and not onnx_p.exists():
+            issues.append("Neither .pt nor .onnx file found in models/")
+
+        if issues:
+            msg = "; ".join(issues)
+            logger.warning(f"[VALIDATE] {v}: {msg}")
+            return False, msg
+
+        logger.info(f"[VALIDATE] {v}: OK")
+        return True, "OK"
+
+    def _validate_onnx_file(self, path: Path) -> tuple:
+        """
+        Attempt to load an ONNX file with ORT and verify input shape.
+        Returns (ok: bool, message: str).
+        """
+        try:
+            import onnxruntime as ort
+            sess = ort.InferenceSession(
+                str(path), providers=["CPUExecutionProvider"])
+            inp   = sess.get_inputs()[0]
+            shape = inp.shape
+            if len(shape) != 4:
+                return (False,
+                        f"Unexpected input rank {len(shape)} (expected 4 for NCHW)")
+            if shape[1] not in (3, "C"):
+                return (False,
+                        f"Expected 3-channel input, got channels={shape[1]}")
+            return True, "OK"
+        except ImportError:
+            # ORT not available — accept without full validation
+            return True, "OK (ORT not available for deep validation)"
+        except Exception as exc:
+            return False, str(exc)
+
+    # ── Switch model + log (PART 5, 12) ───────────────────────────────────────
+    def switch_variant(self, variant: str):
+        """Switch active variant and log the change (PART 5 / PART 12)."""
+        old = self._variant
+        self.set_variant(variant)
+        logger.info(f"[SWITCH] {old} → {variant}")
 
     # ── Download ──────────────────────────────────────────────────────────────
     def ensure_pt(self, blocking: bool = True,

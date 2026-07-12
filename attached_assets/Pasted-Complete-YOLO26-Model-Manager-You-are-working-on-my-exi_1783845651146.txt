@@ -1,0 +1,197 @@
+Complete YOLO26 Model Manager
+You are working on my existing project:
+DualVision AI Detector v1.3 Stable CPU Edition
+Do NOT create a new project.
+Continue from the current stable version.
+Do NOT redesign the UI.
+Do NOT modify the working ONNX Runtime detection pipeline.
+Do NOT break any existing feature.
+The application already supports a model selector:
+YOLO26n
+YOLO26s
+YOLO26m
+YOLO26l
+YOLO26x
+However, only YOLO26n actually works because it is available locally.
+The remaining models cannot be used because there is no download, import, export, or model management workflow.
+Implement a complete Model Manager.
+PART 1 – Model Manager
+Create a dedicated Model Manager.
+Display all supported models.
+Example:
+YOLO26n
+YOLO26s
+YOLO26m
+YOLO26l
+YOLO26x
+For every model display:
+Installed
+Not Installed
+Downloaded
+ONNX Ready
+Export Required
+File Size
+Last Modified
+PART 2 – Download Models
+If a model is not installed:
+Show:
+Download
+When clicked:
+Download the official .pt model into:
+models/
+Never download unofficial models.
+If download fails:
+Show the exact error.
+Never fail silently.
+PART 3 – Import Local Model
+Add:
+Import Model
+Allow user to browse and select:
+.pt
+.onnx
+Validate the file.
+Copy it into:
+models/
+Refresh the model list automatically.
+PART 4 – Automatic ONNX Export
+When a .pt model is selected:
+Check whether:
+model.onnx
+already exists.
+If yes:
+Load ONNX directly.
+If not:
+Export only once.
+Save:
+models/yolo26s.onnx
+models/yolo26m.onnx
+models/yolo26l.onnx
+models/yolo26x.onnx
+Never export every startup.
+PART 5 – Model Selection
+When the user changes model:
+Unload previous model safely.
+Release:
+ONNX Runtime Session
+Memory
+Inference Thread
+Load the new model.
+No application restart required.
+PART 6 – Export Progress
+During export display:
+Current Step
+Progress Bar
+Elapsed Time
+Estimated Remaining Time
+Status:
+Loading
+Exporting
+Optimizing
+Saving
+Completed
+If export fails:
+Display complete error.
+PART 7 – Model Information
+Display:
+Model Name
+Input Resolution
+Number of Parameters
+GFLOPs
+Backend
+Device
+ONNX Size
+PT Size
+Classes
+Export Date
+PART 8 – Model Benchmark
+Display expected CPU performance.
+Example:
+Model
+Speed
+Accuracy
+YOLO26n
+Fastest
+Lowest
+YOLO26s
+Fast
+Better
+YOLO26m
+Medium
+High
+YOLO26l
+Slow
+Very High
+YOLO26x
+Slowest
+Highest
+This is only informational.
+Do not fake benchmark values.
+PART 9 – Model Folder
+All models stored here:
+models/
+Example:
+yolo26n.pt
+yolo26n.onnx
+
+yolo26s.pt
+yolo26s.onnx
+
+yolo26m.pt
+yolo26m.onnx
+
+yolo26l.pt
+yolo26l.onnx
+
+yolo26x.pt
+yolo26x.onnx
+Automatically detect every installed model.
+PART 10 – Validation
+Before loading a model verify:
+File exists
+File readable
+Correct format
+Correct YOLO26 architecture
+ONNX valid
+Compatible with current software
+If invalid:
+Show an error.
+Do not crash.
+PART 11 – Settings
+Remember the last selected model.
+On next startup:
+Automatically reload it if available.
+If missing:
+Load YOLO26n.
+Notify the user.
+PART 12 – Logging
+Create:
+logs/model_manager.log
+Log:
+Downloads
+Imports
+Exports
+Model Switching
+Validation
+Errors
+PART 13 – Regression Protection
+Do NOT break:
+Camera
+Detection
+Recording
+Screenshot
+Dashboard
+Tracking
+ONNX Runtime
+Camera Switching
+Only extend the model management system.
+FINAL ACCEPTANCE TEST
+Verify:
+Download YOLO26s.
+Export to ONNX.
+Load successfully.
+Run live detection.
+Repeat for:
+YOLO26m
+YOLO26l
+YOLO26x
+Ensure every supported model can be downloaded, exported, loaded, and used without restarting the application.

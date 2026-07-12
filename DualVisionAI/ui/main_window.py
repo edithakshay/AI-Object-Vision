@@ -83,6 +83,7 @@ class MainWindow(ctk.CTk):
         self._frame_lock = threading.Lock()
 
         self._debug_dashboard: DebugDashboard | None = None
+        self._model_manager_dlg = None
 
         self._pending_log: list[tuple] = []
         self._log_lock = threading.Lock()
@@ -281,7 +282,8 @@ class MainWindow(ctk.CTk):
             "export_json":  self._on_export_json,
             "about":        self._on_about,
             "exit":         self._on_exit,
-            "debug":        self._on_debug,
+            "debug":         self._on_debug,
+            "model_manager": self._on_model_manager,
         }
         self._toolbar = Toolbar(self, callbacks=callbacks)
         self._toolbar.pack(fill="x", side="top")
@@ -1059,6 +1061,54 @@ class MainWindow(ctk.CTk):
 
     def _on_about(self):
         AboutDialog(self)
+
+    def _on_model_manager(self):
+        """Open or focus the dedicated Model Manager window (PART 5)."""
+        try:
+            if (self._model_manager_dlg is None or
+                    not self._model_manager_dlg.winfo_exists()):
+                from ui.model_manager_dialog import ModelManagerDialog
+                self._model_manager_dlg = ModelManagerDialog(
+                    self,
+                    self._settings,
+                    on_load_model=self._on_load_model)
+                self._model_manager_dlg.lift()
+            else:
+                self._model_manager_dlg.lift()
+                self._model_manager_dlg.focus_force()
+        except Exception as exc:
+            logger.warning(f"Model Manager error: {exc}")
+
+    def _on_load_model(self, variant: str):
+        """
+        Hot-swap active model (PART 5).
+        Called by ModelManagerDialog when the user clicks 'Load'.
+        If detection is running: stop it, swap, restart automatically.
+        If idle: save setting and show a brief info message.
+        """
+        import tkinter.messagebox as _mb
+        was_detecting = self._detecting
+        if was_detecting:
+            logger.info(f"Hot-swap: stopping detection to load {variant}")
+            self._on_stop()
+
+        self._settings.set("inference", "active_model", variant)
+        self._settings.save()
+        logger.info(f"Hot-swap: active_model → {variant}")
+
+        if was_detecting:
+            # Small delay so inference threads finish cleanly before restart
+            logger.info(f"Hot-swap: restarting detection with {variant}")
+            self.after(700, self._on_start)
+        else:
+            try:
+                _mb.showinfo(
+                    "Model Loaded",
+                    f"Active model set to  {variant}.\n\n"
+                    "Click  ▶ Start  to begin detection with this model.",
+                    parent=self)
+            except Exception:
+                pass
 
     def _on_debug(self):
         """Open or focus the Debug Dashboard floating window."""
