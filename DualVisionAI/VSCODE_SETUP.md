@@ -1,4 +1,7 @@
 # DualVision AI Detector v1.3 — VS Code Setup Guide
+## Phase 3: Search & Rescue Mission Core
+
+---
 
 ## Requirements
 
@@ -10,15 +13,16 @@
 
 ---
 
-## Step 1 — Open the project in VS Code
+## Step 1 — Get the project
 
+Download `DualVisionAI_Phase3.zip` and extract it.  You should have a folder called `DualVisionAI/`.
+
+Open it in VS Code:
 ```bash
-# Open only the DualVisionAI folder as the workspace root
 code DualVisionAI
 ```
 
-The `.vscode/` folder already contains `launch.json` and `settings.json`
-with pre-configured run/debug profiles.
+The `.vscode/` folder already contains `launch.json` and `settings.json` with pre-configured run/debug profiles.
 
 ---
 
@@ -56,9 +60,6 @@ This installs:
 - `Pillow` — image utilities
 - `av` — video recording
 
-> **Note:** `ultralytics` is only used once to export the `.pt` model to `.onnx`.
-> After the first export, it is never needed again.
-
 ---
 
 ## Step 4 — Select Python interpreter in VS Code
@@ -74,7 +75,6 @@ This installs:
 
 ### Option A: F5 in VS Code
 - Press `F5` to launch the **"▶ Run DualVision AI"** configuration.
-- The integrated terminal will appear and the splash screen will open.
 
 ### Option B: Command line
 ```bash
@@ -82,44 +82,133 @@ This installs:
 python main.py
 ```
 
-### Option C: Additional tools
-- **"⚙ Setup"** — downloads and exports the YOLO26n model (run this first if no internet later).
-- **"⬇ Download All Models"** — pre-downloads all YOLO26 variants.
-- **"🖼 Generate Icons"** — regenerates app icons.
-
 ---
 
 ## Step 6 — First launch checklist
 
 On the very first launch the application will:
-
 1. Show the splash screen
 2. Load your saved configuration (or use defaults)
-3. Start the RGB RTSP stream (configures as offline if no URL set)
+3. Start the RGB RTSP stream
 4. Write startup logs to `logs/`
 5. Run the UI self-test and write `logs/ui_check.log`
 
 When you click **Start**:
-- If `models/yolo26n.pt` is missing → downloads from Ultralytics (~6 MB, internet required once)
-- If `models/yolo26n.onnx` is missing → exports from the `.pt` file automatically
-- Detection begins on the active camera stream
+- If `models/yolo26n.pt` is missing → downloads from Ultralytics (~6 MB)
+- If `models/yolo26n.onnx` is missing → exports automatically
+- Detection begins
+
+---
+
+## Toolbar (Phase 3)
+
+```
+▶ Start | ■ Stop | ⏸ Pause | 📷 Shot | ⏺ Record | ⚙ Settings | 🎯 Mission | 🗂 Models | 🔍 Debug | CSV | JSON | About | ✕ Exit
+```
+
+| Button | Function |
+|---|---|
+| ▶ Start | Begin detection |
+| ■ Stop | Stop detection |
+| ⏸ Pause | Pause / Resume |
+| 📷 Shot | Screenshot |
+| ⏺ Record | Start/stop recording |
+| ⚙ Settings | Open Settings window |
+| 🎯 Mission | Open Mission Manager |
+| 🗂 Models | Model Manager |
+| 🔍 Debug | Debug Dashboard |
+| CSV / JSON | Export detection log |
+| About | App info |
+| ✕ Exit | Exit with confirmation |
+
+---
+
+## Mission Manager (Phase 3)
+
+Click **🎯 Mission** to open the Mission Manager.  It has 7 tabs:
+
+### Setup
+Fill in:
+- **Mission Name** (required)
+- Operator Name, Drone Name, Search Area
+- **Mission Type**: Search & Rescue / Disaster Assessment / Fire Monitoring / Vehicle Search / Wildlife Monitoring
+
+Click **▶ Start Mission** — a folder is auto-created:
+```
+missions/
+└── Mission_2026-07-13_MyMission/
+    ├── recordings/
+    ├── screenshots/
+    ├── evidence/
+    ├── detections.csv
+    ├── detections.json
+    ├── mission.json
+    ├── logs/
+    └── report/
+```
+
+### Evidence
+Auto-captured screenshots of every new detection.  Each item shows:
+- Priority (🔴 High / 🟡 Medium / 🟢 Low)
+- Class name, confidence, track ID, camera, timestamp
+- **View** button to see the image
+
+### Review
+Operator manually reviews detections:
+- **Verify** — mark as confirmed
+- **Note** — add a text annotation
+- **Delete** — remove from list
+- **View** — zoom into the image
+
+### Timeline
+Automatic chronological log of all mission events:
+- Mission started / paused / finished
+- Detections with priority colour-coding
+- Alerts in red
+
+### Statistics
+Live dashboard:
+- Mission Time (HH:MM:SS)
+- Total Detections, Persons, Vehicles, Animals, Fire/Smoke
+- Screenshots Saved, Avg Confidence, Detection Rate/min
+
+### Filters
+Toggle which object classes appear in Evidence:
+- Person, Vehicle, Animal, Fire, Smoke, Boat, Backpack, Chair, Bottle, …
+
+### History
+Database of all past missions.  Click **Open Folder** to browse any mission's saved files.
+
+---
+
+## Detection Priority
+
+| Priority | Classes |
+|---|---|
+| 🔴 High | Person, Fire, Smoke, Boat |
+| 🟡 Medium | Car, Truck, Bus, Bicycle, Animal, Backpack |
+| 🟢 Low | Chair, Bottle, TV, Cup, etc. |
+
+High-priority detections trigger:
+- Alert popup (auto-closes in 4 s)
+- Sound beep (Windows only)
+- Red timeline entry
+
+---
+
+## Evidence Capture Settings (in Setup tab)
+
+| Setting | Description |
+|---|---|
+| Screenshot every new track | Capture once per unique track ID |
+| Screenshot High Priority only | Only capture 🔴 High detections |
+| Min Confidence | Skip detections below this threshold |
 
 ---
 
 ## Configuration
 
-Click **Settings** (⚙) to configure:
-
-| Setting | Description |
-|---|---|
-| RGB URL | RTSP stream URL for the RGB camera (e.g. `rtsp://192.168.1.100/stream1`) |
-| Thermal URL | RTSP stream URL for the thermal camera |
-| Confidence | Detection confidence threshold (default 0.45) |
-| IoU | NMS IoU threshold (default 0.45) |
-| Frame Skip | Process every Nth frame (1 = every frame) |
-| Input Width | ONNX model input size (default 640) |
-| Enable Tracking | Toggle ByteTrack object tracking |
-| CPU Threads | Number of ORT intra-op threads (0 = auto) |
+Click **⚙ Settings** to configure RTSP, detection, tracking, ONNX options.
 
 Settings are saved to `config/settings.json` automatically.
 
@@ -129,12 +218,16 @@ Settings are saved to `config/settings.json` automatically.
 
 | File | Contents |
 |---|---|
-| `logs/startup.log` | App init, model loading, ONNX export |
-| `logs/inference.log` | Per-inference timings, detection counts |
+| `logs/startup.log` | App init, model loading |
+| `logs/inference.log` | Per-inference timings |
 | `logs/camera.log` | RTSP stream events |
-| `logs/fps_debug.log` | Per-second FPS diagnostics |
+| `logs/tracking.log` | Track lifecycle events |
+| `logs/fps_debug.log` | Per-second FPS |
 | `logs/debug.log` | Everything (verbose) |
-| `logs/ui_check.log` | Startup UI self-test results |
+| `logs/ui_check.log` | Startup UI self-test |
+| `missions/*/mission.json` | Full mission record |
+| `missions/*/detections.csv` | Evidence CSV |
+| `missions/*/detections.json` | Evidence JSON |
 
 ---
 
@@ -149,59 +242,43 @@ Settings are saved to `config/settings.json` automatically.
 
 ---
 
-## Project Structure
+## Project Structure (Phase 3)
 
 ```
 DualVisionAI/
-├── main.py                     ← Entry point
-├── requirements.txt            ← Python dependencies
-├── setup.py                    ← First-time model download/export
-├── UI_COMPONENT_LIST.md        ← Complete UI inventory
-├── UI_VERIFICATION_CHECKLIST.md← Manual verification guide
-├── VSCODE_SETUP.md             ← This file
+├── main.py
+├── requirements.txt
 │
-├── ai/
-│   ├── detector.py             ← ONNX Runtime inference engine
-│   ├── backend_manager.py      ← ORT session configuration
-│   └── model_manager.py        ← .pt → .onnx export
+├── ai/            ← ONNX inference, model manager, backend
+├── camera/        ← RTSP stream with auto-reconnect
+├── config/        ← JSON-backed settings
+├── tracking/      ← ByteTrack + Kalman filter
 │
-├── camera/
-│   └── stream.py               ← RTSP stream with auto-reconnect
-│
-├── config/
-│   └── settings.py             ← JSON-backed configuration
-│
-├── tracking/
-│   └── tracker.py              ← Enhanced ByteTrack + Kalman filter
+├── mission/                     ← NEW Phase 3
+│   ├── __init__.py
+│   ├── mission_state.py         ← Mission lifecycle, folder, stats, DB
+│   ├── evidence_manager.py      ← Auto evidence capture + CSV/JSON
+│   └── alert_system.py          ← Detection alerts + sound
 │
 ├── ui/
-│   ├── main_window.py          ← Main application window
-│   ├── toolbar.py              ← Top toolbar
-│   ├── camera_panel.py         ← Video feed display
-│   ├── control_panel.py        ← Right dashboard (scrollable)
-│   ├── statusbar.py            ← Bottom status bar
-│   ├── settings_dialog.py      ← Settings modal
-│   ├── about_dialog.py         ← About modal
-│   └── splash_screen.py        ← Startup splash
+│   ├── main_window.py           ← Main window (wires mission)
+│   ├── toolbar.py               ← Toolbar (Settings + Mission buttons)
+│   ├── mission_dialog.py        ← Mission Manager (7 tabs)  NEW
+│   ├── settings_dialog.py       ← Settings (4 tabs)  unchanged
+│   ├── camera_panel.py
+│   ├── control_panel.py
+│   ├── debug_dashboard.py
+│   ├── model_manager_dialog.py
+│   ├── statusbar.py
+│   ├── about_dialog.py
+│   └── splash_screen.py
 │
-├── utils/
-│   ├── app_logger.py           ← Logging setup
-│   ├── recorder.py             ← Video recording
-│   ├── screenshot.py           ← Screenshot capture
-│   ├── detection_log.py        ← CSV/JSON export log
-│   └── ui_self_test.py         ← Startup UI self-test
-│
-├── models/                     ← Auto-created on first Start
-│   ├── yolo26n.pt
-│   └── yolo26n.onnx
-│
-├── logs/                       ← Auto-created on startup
-├── recordings/                 ← Auto-created on first recording
-├── screenshots/                ← Auto-created on first screenshot
-│
-└── .vscode/
-    ├── launch.json             ← Run/Debug profiles
-    └── settings.json           ← Editor settings
+├── utils/         ← logging, recorder, screenshot, detection_log
+├── models/        ← auto-created
+├── logs/          ← auto-created
+├── recordings/    ← auto-created
+├── screenshots/   ← auto-created
+└── missions/      ← auto-created on first mission start
 ```
 
 ---
@@ -214,17 +291,16 @@ pip install -r requirements.txt
 ```
 
 ### Camera shows black / "Disconnected"
-- The app works without a live camera. Configure the RTSP URL in Settings.
-- For local webcam testing, use `rtsp://` or modify stream.py to use `cv2.VideoCapture(0)`.
+Configure the RTSP URL in Settings (⚙).
 
 ### ONNX export fails
-- Ensure `ultralytics` is installed: `pip install ultralytics`
-- Run `setup.py` manually for detailed output
+```bash
+pip install ultralytics
+python setup.py
+```
 
-### UI appears on wrong monitor or off-screen
-- Delete `config/settings.json` and restart to reset window position
+### Mission folder not created
+Make sure you fill in **Mission Name** before clicking Start Mission.
 
-### Detection starts but no boxes appear
-- Check confidence threshold in Settings (try lowering to 0.30)
-- Check `logs/inference.log` for output shape diagnostics
-- Check `logs/debug.log` for full error trace
+### Alert sound not working
+Sound (winsound) is Windows-only.  On macOS/Linux the popup and bell still fire; the beep is silenced automatically.

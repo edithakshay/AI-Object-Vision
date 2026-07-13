@@ -1,1 +1,2 @@
 - [DualVisionAI tracker Phase 2](dualvision-tracker-p2.md) — Phase 2 tracking decisions: trails, events, motion, empty-frame fix, settings wiring.
+- [DualVisionAI tracker Phase 3](dualvision-tracker-p3.md) — Phase 3 Mission Manager: mission package wiring, evidence capture, alert system, toolbar rules.

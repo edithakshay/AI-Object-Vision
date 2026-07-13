@@ -1,0 +1,104 @@
+You are working on the existing DualVision AI Detector.
+CRITICAL BUG
+While implementing the Mission Manager, you accidentally removed the existing Settings button and Settings window.
+This is a regression.
+Mission Manager is a new feature.
+Settings is an existing core feature.
+Both must exist together.
+Fix Required
+Restore the original Settings button exactly as it existed.
+Restore the original Settings Window with all previously available tabs and functionality.
+Do not change its layout or remove any options.
+Keep the new Mission button as an additional feature.
+The toolbar must become:
+Start
+Stop
+Pause
+Shot
+Record
+Settings
+Mission
+CSV
+JSON
+About
+Exit
+Clicking Settings must open the Settings window.
+Clicking Mission must open the Mission Manager.
+Both windows are independent.
+🚨 Permanent Development Rules (Mandatory)
+These rules apply to every future phase of this project.
+Rule 1 – Never Replace Existing Features
+Never replace an existing working feature with a new feature. Every new feature must be added alongside the existing system unless I explicitly ask for a replacement.
+Rule 2 – Regression Protection
+Before modifying any file:
+Create a backup checkpoint.
+Compare the new version with the previous working version.
+Verify that no existing functionality has been removed.
+Rule 3 – Preserve UI
+Never remove:
+Buttons
+Menus
+Tabs
+Windows
+Panels
+Dashboard widgets
+unless I explicitly instruct you to do so.
+Rule 4 – Extend, Don't Replace
+When adding new functionality:
+✅ Add new windows
+✅ Add new tabs
+✅ Add new panels
+✅ Add new menu items
+❌ Never overwrite existing ones.
+Rule 5 – Backward Compatibility
+Every update must remain fully compatible with:
+RGB Camera
+Thermal Camera
+Camera Switching
+YOLO26
+ONNX Runtime
+Detection
+Tracking
+Recording
+Screenshot
+CSV
+JSON
+Dashboard
+Settings
+Rule 6 – Feature Verification
+After every update verify that all previously working features still work.
+Rule 7 – If a Conflict Exists
+If there is not enough UI space:
+Never delete an existing button.
+Instead:
+Create a new toolbar row.
+Add a "More" menu.
+Use a sidebar.
+Use tabs.
+Expand the ribbon.
+Deleting existing functionality is never allowed.
+Rule 8 – Existing Features Have Higher Priority
+A working feature is always more important than a new feature.
+If implementing a new feature would break an existing feature:
+Do not merge the change.
+Redesign the implementation.
+Keep the existing feature untouched.
+Rule 9 – Maintain Version Stability
+Every new phase must be built on top of the previous stable version.
+Never rebuild working modules from scratch unless explicitly instructed.
+Rule 10 – Final Verification Checklist
+Before considering any task complete, automatically verify:
+Settings button exists.
+Mission button exists.
+Settings window opens.
+Mission window opens.
+Detection works.
+Tracking works.
+Recording works.
+Screenshot works.
+Camera switching works.
+ONNX Runtime works.
+Dashboard works.
+CSV works.
+JSON works.
+If any item fails, the update is not complete.

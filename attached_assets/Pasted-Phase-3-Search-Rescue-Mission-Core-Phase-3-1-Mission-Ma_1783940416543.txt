@@ -1,0 +1,159 @@
+Phase 3 – Search & Rescue Mission Core
+Phase 3.1 – Mission Manager (Highest Priority)
+Ye software ka heart hoga.
+Mission start karne se pehle:
+Mission Name
+Mission ID (Auto Generate)
+Operator Name
+Drone Name
+Search Area
+Mission Type
+Search & Rescue
+Disaster Assessment
+Fire Monitoring
+Vehicle Search
+Wildlife Monitoring
+Date & Time
+Mission Folder (auto-create)
+Mission start hote hi ek folder create ho:
+Mission_2026-07-12_001/
+├── recordings/
+├── screenshots/
+├── detections.csv
+├── detections.json
+├── mission.json
+├── logs/
+└── report/
+Phase 3.2 – Evidence Manager
+Har detection automatically evidence ban jaye.
+Save:
+Screenshot
+Video Timestamp
+Object Class
+Confidence
+Track ID
+Camera (RGB/Thermal)
+Frame ID
+Detection ID
+Future me GPS bhi isi record me add hoga.
+Phase 3.3 – Detection Review Panel
+Ek naya tab:
+Detection List
+
+Person
+Chair
+Bottle
+
+Click
+
+↓
+
+Image
+
+↓
+
+Zoom
+
+↓
+
+Delete
+
+↓
+
+Mark Verified
+
+↓
+
+Add Note
+Operator manually verify kar sake.
+Phase 3.4 – Detection Priority
+AI automatically priority assign kare:
+🔴 High
+Person
+Fire
+Smoke
+Boat
+🟡 Medium
+Vehicle
+Animal
+Backpack
+🟢 Low
+Chair
+Bottle
+TV
+Later user editable rules add karna.
+Phase 3.5 – Automatic Evidence Capture
+Settings:
+☑ Screenshot every new track
+☑ Screenshot only High Priority
+☑ Save every N seconds
+☑ Save only confidence > threshold
+Phase 3.6 – Mission Timeline
+Automatic log:
+10:01 Mission Started
+
+10:05 Person Detected
+
+10:06 Screenshot Saved
+
+10:08 Vehicle Detected
+
+10:12 Operator Verified
+
+10:15 Mission Paused
+
+10:18 Mission Finished
+Phase 3.7 – Search Statistics
+Dashboard me:
+Mission Time
+Objects Found
+Persons
+Vehicles
+Animals
+Average Confidence
+Detection Rate
+Screenshots Saved
+Recording Size
+Total Frames Processed
+Phase 3.8 – Search Filters
+Live filter:
+☑ Person
+☑ Vehicle
+☑ Animal
+☑ Fire
+☑ Smoke
+☑ Chair
+☑ Bottle
+Operator sirf required classes dekh sake.
+Phase 3.9 – Alert System
+New person detect:
+🔔 Popup
+Play sound
+Mission log entry
+High Priority object:
+Red highlight
+Thermal person:
+Different sound
+Phase 3.10 – Mission Database
+Har mission save ho.
+Mission History page:
+Mission 001
+Mission 002
+Mission 003
+Click
+↓
+Open
+↓
+Replay
+↓
+Export
+Phase 3 Deliverables
+Phase 3 complete hone par software me ye modules hone chahiye:
+✅ Mission Manager
+✅ Evidence Manager
+✅ Detection Review
+✅ Mission Timeline
+✅ Mission Statistics
+✅ Search Filters
+✅ Alert System
+✅ Mission Database

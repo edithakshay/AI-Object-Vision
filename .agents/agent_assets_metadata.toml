@@ -66,3 +66,9 @@ id = "h3YPo4U4EgPWQujQ6ZskE"
 uri = "file://DualVisionAI.tar.gz"
 type = "unspecified"
 title = "DualVisionAI.tar.gz"
+
+[[outputs]]
+id = "jU6Zn-JzvBqbbRJxVkunO"
+uri = "file://DualVisionAI_Phase3.tar.gz"
+type = "unspecified"
+title = "DualVisionAI Phase 3 — VS Code Ready"

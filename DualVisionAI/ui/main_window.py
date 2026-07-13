@@ -44,6 +44,10 @@ from ui.control_panel import ControlPanel
 from ui.settings_dialog import SettingsDialog
 from ui.about_dialog import AboutDialog
 from ui.debug_dashboard import DebugDashboard
+from ui.mission_dialog import MissionDialog
+from mission.mission_state import MissionState, get_priority
+from mission.evidence_manager import EvidenceManager
+from mission.alert_system import AlertSystem
 
 logger    = logging.getLogger("DualVisionAI.mainwindow")
 fps_logger = logging.getLogger("DualVisionAI.fps")
@@ -84,6 +88,7 @@ class MainWindow(ctk.CTk):
 
         self._debug_dashboard: DebugDashboard | None = None
         self._model_manager_dlg = None
+        self._mission_dialog: MissionDialog | None = None
 
         self._pending_log: list[tuple] = []
         self._log_lock = threading.Lock()
@@ -168,6 +173,11 @@ class MainWindow(ctk.CTk):
 
         self._rgb_tracker.set_event_callback(self._on_tracking_event)
         self._thermal_tracker.set_event_callback(self._on_tracking_event)
+
+        # ── Phase 3 — Mission system ──────────────────────────────────────────
+        self._mission_state   = MissionState()
+        self._evidence_mgr    = EvidenceManager(self._mission_state)
+        self._alert_system    = AlertSystem()
 
         self._screenshot_util = ScreenshotUtil(
             output_dir=s.get("screenshots", "output_dir", "screenshots"))
@@ -284,6 +294,7 @@ class MainWindow(ctk.CTk):
             "exit":         self._on_exit,
             "debug":         self._on_debug,
             "model_manager": self._on_model_manager,
+            "mission":       self._on_mission,
         }
         self._toolbar = Toolbar(self, callbacks=callbacks)
         self._toolbar.pack(fill="x", side="top")
@@ -620,6 +631,22 @@ class MainWindow(ctk.CTk):
             self._det_log.log(cam_label, name, conf, tid, box)
             with self._log_lock:
                 self._pending_log.append((cam_label, name, conf, tid))
+            # ── Phase 3: Evidence capture + Alert system ──────────────────────
+            try:
+                with self._frame_lock:
+                    ev_frame = (self._rgb_display_frame
+                                if stream == "rgb"
+                                else self._thermal_display_frame)
+                self._evidence_mgr.capture(
+                    ev_frame, name, conf,
+                    track_id=tid if tid else i,
+                    camera=cam_label)
+                self._alert_system.check(
+                    name, conf,
+                    track_id=tid if tid else i,
+                    camera=cam_label)
+            except Exception:
+                pass
 
     # ── UI Tick ───────────────────────────────────────────────────────────────
     def _start_ui_tick(self):
@@ -1109,6 +1136,25 @@ class MainWindow(ctk.CTk):
                     parent=self)
             except Exception:
                 pass
+
+    def _on_mission(self):
+        """Open or focus the Mission Manager window (Phase 3)."""
+        try:
+            if (self._mission_dialog is None or
+                    not self._mission_dialog.winfo_exists()):
+                self._mission_dialog = MissionDialog(
+                    self,
+                    self._mission_state,
+                    self._evidence_mgr,
+                    self._alert_system)
+                self._mission_dialog.lift()
+            else:
+                self._mission_dialog.lift()
+                self._mission_dialog.focus_force()
+        except Exception as exc:
+            logger.warning(f"Mission Manager error: {exc}")
+            import traceback as _tb
+            logger.debug(_tb.format_exc())
 
     def _on_debug(self):
         """Open or focus the Debug Dashboard floating window."""
