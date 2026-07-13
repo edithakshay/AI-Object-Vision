@@ -2,12 +2,26 @@
 Mission State — DualVision AI Phase 3
 Manages mission lifecycle, folder structure, timeline, statistics,
 and JSON persistence.
+
+Folder isolation guarantee
+──────────────────────────
+Every call to start() produces a NEW unique directory:
+    missions/Mission_YYYYMMDD_HHMMSS_NNN/
+where NNN is a zero-padded monotonic counter that increments even if two
+missions start within the same second.  The folder is NEVER re-used.
+
+Finish guarantee
+────────────────
+finish() writes:
+  • mission.json   — full machine-readable record
+  • report/mission_report.txt — human-readable summary
+  • logs/mission.log           — full timeline
+then sets mission_dir to None so any stale reference fails loudly.
 """
 
 import json
 import os
 import threading
-import time
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -16,17 +30,17 @@ from typing import Any, Callable, Dict, List, Optional
 
 
 class MissionType(str, Enum):
-    SEARCH_RESCUE    = "Search & Rescue"
-    DISASTER         = "Disaster Assessment"
-    FIRE             = "Fire Monitoring"
-    VEHICLE          = "Vehicle Search"
-    WILDLIFE         = "Wildlife Monitoring"
+    SEARCH_RESCUE = "Search & Rescue"
+    DISASTER      = "Disaster Assessment"
+    FIRE          = "Fire Monitoring"
+    VEHICLE       = "Vehicle Search"
+    WILDLIFE      = "Wildlife Monitoring"
 
 
 class MissionStatus(str, Enum):
-    IDLE    = "Idle"
-    ACTIVE  = "Active"
-    PAUSED  = "Paused"
+    IDLE     = "Idle"
+    ACTIVE   = "Active"
+    PAUSED   = "Paused"
     FINISHED = "Finished"
 
 
@@ -65,29 +79,49 @@ class TimelineEntry:
         }
 
 
+# ── Global monotonic mission counter (process lifetime) ──────────────────────
+_MISSION_COUNTER_LOCK = threading.Lock()
+_MISSION_COUNTER      = 0
+
+
+def _next_mission_number() -> int:
+    global _MISSION_COUNTER
+    with _MISSION_COUNTER_LOCK:
+        _MISSION_COUNTER += 1
+        return _MISSION_COUNTER
+
+
 class MissionState:
     """
-    Single mission session.
+    Single reusable mission session object.
+    Calling start() always produces a brand-new, unique folder.
     Thread-safe via self._lock.
     """
 
-    # ── Mission database root ─────────────────────────────────────────────────
     DB_ROOT = Path("missions")
 
     def __init__(self):
         self._lock   = threading.Lock()
         self._status = MissionStatus.IDLE
 
-        # Form fields
-        self.mission_name   = ""
-        self.mission_id     = ""
-        self.operator_name  = ""
-        self.drone_name     = ""
-        self.search_area    = ""
-        self.mission_type   = MissionType.SEARCH_RESCUE
-        self.start_time:  Optional[datetime] = None
-        self.end_time:    Optional[datetime]  = None
-        self.mission_dir: Optional[Path]      = None
+        # Form fields (set by start())
+        self.mission_name  = ""
+        self.mission_id    = ""
+        self.operator_name = ""
+        self.drone_name    = ""
+        self.search_area   = ""
+        self.mission_type  = MissionType.SEARCH_RESCUE
+        self.start_time:   Optional[datetime] = None
+        self.end_time:     Optional[datetime] = None
+
+        # ── Current mission folder — None when no mission is active ──────────
+        # This is set atomically inside start() and cleared after finish()
+        # writes its final report.  Writers must read this once and hold
+        # their own reference; never re-read it mid-write.
+        self.mission_dir:  Optional[Path] = None
+
+        # Sequence number for the current mission (human-readable)
+        self._mission_seq: int = 0
 
         # Timeline
         self._timeline: List[TimelineEntry] = []
@@ -141,22 +175,34 @@ class MissionState:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     def start(self, name: str, operator: str, drone: str,
               area: str, mtype: MissionType) -> Path:
+        """
+        Start a new mission.
+        ALWAYS creates a completely new, unique folder.
+        Returns the new mission_dir Path.
+        """
+        seq = _next_mission_number()
+
         with self._lock:
-            self._status      = MissionStatus.ACTIVE
-            self.mission_name = name
-            self.mission_id   = self._gen_id()
+            self._status       = MissionStatus.ACTIVE
+            self.mission_name  = name
+            self.mission_id    = self._gen_id(seq)
             self.operator_name = operator
-            self.drone_name   = drone
-            self.search_area  = area
-            self.mission_type = mtype
-            self.start_time   = datetime.now()
-            self.end_time     = None
+            self.drone_name    = drone
+            self.search_area   = area
+            self.mission_type  = mtype
+            self.start_time    = datetime.now()
+            self.end_time      = None
+            self._mission_seq  = seq
             self._timeline.clear()
             self._reset_stats()
-            self.mission_dir  = self._create_folder()
+
+            # ── Create fresh folder INSIDE the lock so mission_dir is
+            # always consistent with the rest of the fields.
+            self.mission_dir = self._create_fresh_folder(seq)
+
         self._log("Mission Started", "info")
         self._save_mission_json()
-        return self.mission_dir
+        return self.mission_dir  # type: ignore[return-value]
 
     def pause(self):
         with self._lock:
@@ -171,12 +217,28 @@ class MissionState:
         self._log("Mission Resumed", "info")
 
     def finish(self):
+        """
+        Finish the mission, flush all data to disk, write the report,
+        then clear mission_dir so the next start() cannot accidentally
+        inherit this folder.
+        """
         with self._lock:
-            if self._status in (MissionStatus.ACTIVE, MissionStatus.PAUSED):
-                self._status  = MissionStatus.FINISHED
-                self.end_time = datetime.now()
+            if self._status not in (MissionStatus.ACTIVE, MissionStatus.PAUSED):
+                return
+            self._status  = MissionStatus.FINISHED
+            self.end_time = datetime.now()
+            folder = self.mission_dir   # hold reference before we clear it
+
         self._log("Mission Finished", "info")
-        self._save_mission_json()
+
+        # ── Flush all persistent data ─────────────────────────────────────────
+        self._save_mission_json(folder=folder)
+        self._write_mission_log(folder=folder)
+        self._write_report(folder=folder)
+
+        # ── Clear folder reference — next start() MUST create a new one ──────
+        with self._lock:
+            self.mission_dir = None
 
     # ── Timeline ──────────────────────────────────────────────────────────────
     def _log(self, message: str, level: str = "info"):
@@ -198,11 +260,11 @@ class MissionState:
 
     # ── Statistics ────────────────────────────────────────────────────────────
     def _reset_stats(self):
-        for k in self._stats:
+        """Called inside _lock — do NOT acquire lock again."""
+        for k in list(self._stats.keys()):
             self._stats[k] = 0 if isinstance(self._stats[k], int) else 0.0
 
     def record_detection(self, class_name: str, confidence: float):
-        """Call for every confirmed detection during an active mission."""
         if self._status != MissionStatus.ACTIVE:
             return
         name = class_name.lower()
@@ -237,29 +299,51 @@ class MissionState:
         with self._lock:
             return dict(self._stats)
 
-    # ── Persistence ───────────────────────────────────────────────────────────
-    def _gen_id(self) -> str:
-        date_str = datetime.now().strftime("%Y%m%d")
-        uid      = str(uuid.uuid4())[:8].upper()
-        return f"MSN-{date_str}-{uid}"
+    # ── Folder creation ───────────────────────────────────────────────────────
+    def _create_fresh_folder(self, seq: int) -> Path:
+        """
+        Create a GUARANTEED unique mission folder.
 
-    def _create_folder(self) -> Path:
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        safe_name = "".join(c if c.isalnum() or c in "-_ " else "_"
-                            for c in self.mission_name).strip().replace(" ", "_")
-        folder_name = f"Mission_{date_str}_{safe_name}"
+        Naming: Mission_YYYYMMDD_HHMMSS_NNN
+          • YYYYMMDD_HHMMSS  — wall-clock timestamp of this exact start() call
+          • NNN              — global monotonic counter (never repeats in process)
+
+        Even if two missions start within the same second, NNN differs.
+        Even if the process restarts and the clock hasn't advanced, the
+        timestamp differs from any prior run.
+
+        The folder is always brand new — no exist_ok silent re-use.
+        """
+        ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+        folder_name = f"Mission_{ts}_{seq:03d}"
         root = self.DB_ROOT / folder_name
-        for sub in ("recordings", "screenshots", "logs", "report", "evidence"):
-            (root / sub).mkdir(parents=True, exist_ok=True)
-        # Create empty CSV / JSON placeholders
+
+        # If somehow the same name exists (clock skew, test replay), add UUID
+        if root.exists():
+            root = self.DB_ROOT / f"{folder_name}_{str(uuid.uuid4())[:6].upper()}"
+
+        # Create sub-directories
+        for sub in ("recordings", "screenshots", "evidence", "logs", "report"):
+            (root / sub).mkdir(parents=True, exist_ok=False)
+
+        # Write fresh (empty) CSV header — file guaranteed not to exist yet
         (root / "detections.csv").write_text(
-            "detection_id,timestamp,class,confidence,track_id,priority,camera,frame_id,verified,notes\n",
+            "detection_id,timestamp,class,confidence,track_id,"
+            "priority,camera,frame_id,verified,notes\n",
             encoding="utf-8")
+        # Write empty JSON array
         (root / "detections.json").write_text("[]", encoding="utf-8")
+
         return root
 
-    def _save_mission_json(self):
-        if self.mission_dir is None:
+    # ── Persistence ───────────────────────────────────────────────────────────
+    def _gen_id(self, seq: int) -> str:
+        date_str = datetime.now().strftime("%Y%m%d")
+        return f"MSN-{date_str}-{seq:03d}"
+
+    def _save_mission_json(self, folder: Optional[Path] = None):
+        target = folder or self.mission_dir
+        if target is None:
             return
         data = {
             "mission_id":    self.mission_id,
@@ -271,23 +355,100 @@ class MissionState:
             "status":        str(self._status.value),
             "start_time":    self.start_time.isoformat() if self.start_time else None,
             "end_time":      self.end_time.isoformat()   if self.end_time   else None,
+            "elapsed":       self.elapsed_str,
             "stats":         dict(self._stats),
             "timeline":      [e.to_dict() for e in self._timeline],
         }
         try:
-            path = self.mission_dir / "mission.json"
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            (target / "mission.json").write_text(
+                json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _write_mission_log(self, folder: Optional[Path] = None):
+        """Write logs/mission.log with full timestamped timeline."""
+        target = folder or self.mission_dir
+        if target is None:
+            return
+        try:
+            lines = [
+                f"Mission Log — {self.mission_name}",
+                f"ID: {self.mission_id}",
+                f"Operator: {self.operator_name}  |  Drone: {self.drone_name}",
+                f"Area: {self.search_area}",
+                f"Type: {self.mission_type.value}",
+                f"Start: {self.start_time}  |  End: {self.end_time}",
+                f"Elapsed: {self.elapsed_str}",
+                "─" * 60,
+                "",
+            ]
+            for e in self._timeline:
+                lines.append(f"{e.timestamp.strftime('%Y-%m-%d %H:%M:%S')}  "
+                             f"[{e.level.upper():<9}]  {e.message}")
+            (target / "logs" / "mission.log").write_text(
+                "\n".join(lines), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _write_report(self, folder: Optional[Path] = None):
+        """Write report/mission_report.txt — human-readable summary."""
+        target = folder or self.mission_dir
+        if target is None:
+            return
+        try:
+            s = self._stats
+            lines = [
+                "=" * 60,
+                "    DualVision AI — Mission Report",
+                "=" * 60,
+                "",
+                f"  Mission Name : {self.mission_name}",
+                f"  Mission ID   : {self.mission_id}",
+                f"  Mission Type : {self.mission_type.value}",
+                f"  Operator     : {self.operator_name}",
+                f"  Drone        : {self.drone_name}",
+                f"  Search Area  : {self.search_area}",
+                "",
+                f"  Start Time   : {self.start_time}",
+                f"  End Time     : {self.end_time}",
+                f"  Duration     : {self.elapsed_str}",
+                "",
+                "─" * 60,
+                "  STATISTICS",
+                "─" * 60,
+                f"  Total Detections : {s['total_detections']}",
+                f"  Persons Found    : {s['persons']}",
+                f"  Vehicles Found   : {s['vehicles']}",
+                f"  Animals Found    : {s['animals']}",
+                f"  Fire / Smoke     : {s['fire_smoke']}",
+                f"  Screenshots      : {s['screenshots']}",
+                f"  Avg Confidence   : {s['avg_confidence']:.3f}",
+                f"  Detection Rate   : {s['detection_rate']*60:.1f} / min",
+                "",
+                "─" * 60,
+                "  FOLDER",
+                "─" * 60,
+                f"  {target}",
+                "",
+                "=" * 60,
+                f"  Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "=" * 60,
+            ]
+            (target / "report" / "mission_report.txt").write_text(
+                "\n".join(lines), encoding="utf-8")
         except Exception:
             pass
 
     # ── Mission History DB ────────────────────────────────────────────────────
     @classmethod
     def list_missions(cls) -> List[Dict]:
-        """Return list of past mission summaries from the missions/ folder."""
+        """Return list of all past missions, newest first."""
         missions = []
         if not cls.DB_ROOT.exists():
             return missions
         for folder in sorted(cls.DB_ROOT.iterdir(), reverse=True):
+            if not folder.is_dir():
+                continue
             mj = folder / "mission.json"
             if mj.exists():
                 try:

@@ -255,9 +255,15 @@ class MissionDialog(ctk.CTkToplevel):
         area     = self._e_area.get().strip()     or "Unknown"
         mtype    = MissionType(self._type_var.get())
 
+        # ── Order matters:
+        # 1. reset()    — clears all in-memory state from the previous mission
+        # 2. start()    — creates the NEW unique folder, returns its Path
+        # 3. pin_folder() — locks EvidenceManager to that exact folder
+        # This sequence guarantees Mission N never inherits Mission N-1 data.
         self._em.reset()
         self._als.reset()
         folder = self._ms.start(name, operator, drone, area, mtype)
+        self._em.pin_folder(folder)   # pin AFTER start() so folder is fresh
 
         self._id_lbl.configure(text=f"Mission ID:  {self._ms.mission_id}")
         self._folder_lbl.configure(text=f"Folder:  {folder}")
@@ -281,6 +287,10 @@ class MissionDialog(ctk.CTkToplevel):
                                    "Finish and save this mission?",
                                    parent=self):
             return
+        # Flush evidence JSON before closing the mission so the final
+        # detections.json is complete.  finish() then writes the report
+        # and mission.log, and clears mission_dir.
+        self._em.flush_final()
         self._ms.finish()
         self._btn_start.configure(state="normal")
         self._btn_pause_msn.configure(state="disabled", text="⏸  Pause Mission")

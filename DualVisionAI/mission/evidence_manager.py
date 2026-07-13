@@ -1,18 +1,26 @@
 """
 Evidence Manager — DualVision AI Phase 3
-Captures screenshots + metadata for every significant detection,
-writes to mission folder, and maintains an in-memory evidence list.
+
+Key isolation guarantee
+───────────────────────
+Every capture() call reads self._ms.mission_dir ONCE at the start and
+holds that reference for the entire operation.  If the mission finishes
+and mission_dir is cleared to None between two detections, the in-flight
+capture still writes to the correct (previous) folder and the next capture
+correctly drops because mission_dir is None.
+
+This prevents the "Mission 2 writes into Mission 1 folder" bug even under
+race conditions.
 """
 
 import csv
 import json
 import os
 import threading
-import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 import cv2
 
@@ -61,9 +69,9 @@ class Evidence:
 
 class EvidenceManager:
     """
-    Sits between the main detection loop and the mission folder.
-    Call `capture(frame, class_name, ...)` for each detection you want
-    to record as evidence.
+    Bridges the detection loop and the mission folder.
+    Call capture() for every detection — it decides what to save.
+    Call reset() when a new mission starts to clear in-memory state.
     """
 
     def __init__(self, mission_state: MissionState):
@@ -72,72 +80,103 @@ class EvidenceManager:
         self._items: List[Evidence] = []
         self._frame_counter = 0
 
-        # Settings (wired from MissionDialog)
-        self.screenshot_every_new_track = True
-        self.screenshot_high_priority_only = False
-        self.save_interval_seconds   = 0       # 0 = disabled
-        self.min_confidence          = 0.0
-
-        # Seen track IDs for "new track" logic
+        # Per-mission in-memory tracking of seen track IDs
+        # Cleared by reset() before each new mission
         self._seen_tracks: set = set()
 
-        # Callback — called on the calling thread when new evidence added
+        # Settings — wired from MissionDialog
+        self.screenshot_every_new_track    = True
+        self.screenshot_high_priority_only = False
+        self.min_confidence                = 0.0
+
+        # Callback — called (on worker thread) when new evidence added
         self._on_evidence: Optional[Callable] = None
+
+        # ── Pinned folder for the current mission ─────────────────────────────
+        # Set by pin_folder() at mission start.  Used by all writes.
+        # This prevents writes crossing into a new mission's folder.
+        self._active_folder: Optional[Path] = None
 
     def set_callback(self, fn: Callable):
         self._on_evidence = fn
 
+    def pin_folder(self, folder: Path):
+        """
+        Call this immediately after MissionState.start() returns.
+        Pins the mission folder so all subsequent writes go to this
+        exact folder even if mission_state.mission_dir changes later.
+        """
+        with self._lock:
+            self._active_folder = folder
+
     def reset(self):
+        """
+        Must be called before every new mission (before MissionState.start()).
+        Clears all in-memory state so Mission N never sees Mission N-1 data.
+        """
         with self._lock:
             self._items.clear()
             self._seen_tracks.clear()
             self._frame_counter = 0
+            self._active_folder = None   # cleared — pin_folder() must be called again
 
     def capture(self, frame, class_name: str, confidence: float,
                 track_id: int, camera: str):
         """
         Decide whether to capture evidence for this detection.
-        Call from the main detection loop (worker thread).
+        Safe to call from any thread.
         """
+        # ── Guard 1: only when mission is active ──────────────────────────────
         if not self._ms.is_active:
             return
-        if self._ms.mission_dir is None:
+
+        # ── Guard 2: read the pinned folder ONCE — atomic snapshot ───────────
+        with self._lock:
+            folder = self._active_folder
+        if folder is None:
             return
+
+        # ── Guard 3: confidence threshold ────────────────────────────────────
         if confidence < self.min_confidence:
             return
 
         priority = get_priority(class_name)
 
-        # Filter by priority if setting enabled
+        # ── Guard 4: high-priority filter ────────────────────────────────────
         if self.screenshot_high_priority_only and priority != "high":
             return
 
-        is_new_track = track_id not in self._seen_tracks
-        if self.screenshot_every_new_track and not is_new_track:
-            return
-
+        # ── Guard 5: new-track filter ─────────────────────────────────────────
         with self._lock:
+            is_new = track_id not in self._seen_tracks
+            if self.screenshot_every_new_track and not is_new:
+                return
             self._seen_tracks.add(track_id)
             self._frame_counter += 1
             fid = self._frame_counter
 
+        # ── Save image into the PINNED folder (not mission_dir) ───────────────
         img_path = ""
         if frame is not None:
-            img_path = self._save_image(frame, class_name, fid)
+            img_path = self._save_image(frame, class_name, fid, folder)
 
         ev = Evidence(class_name, confidence, track_id, camera, fid, img_path)
 
         with self._lock:
             self._items.append(ev)
 
-        # Update mission stats
+        # ── Update mission stats ──────────────────────────────────────────────
         self._ms.record_detection(class_name, confidence)
         if img_path:
             self._ms.increment_screenshots()
-            self._ms.log_event(
-                f"{class_name.title()} detected — {priority_label(priority)} — "
-                f"conf={confidence:.2f}  [Track#{track_id}]",
-                level="detection" if priority == "high" else "info")
+        self._ms.log_event(
+            f"{class_name.title()} detected — {priority_label(priority)} — "
+            f"conf={confidence:.2f}  [Track#{track_id}]",
+            level="detection" if priority == "high" else "info")
+
+        # ── Write to disk (pinned folder) ─────────────────────────────────────
+        self._append_csv(ev, folder)
+        self._flush_json(folder)
 
         if self._on_evidence:
             try:
@@ -145,12 +184,11 @@ class EvidenceManager:
             except Exception:
                 pass
 
-        self._append_csv(ev)
-        self._update_json()
-
-    def _save_image(self, frame, class_name: str, fid: int) -> str:
+    # ── Image save ────────────────────────────────────────────────────────────
+    def _save_image(self, frame, class_name: str, fid: int,
+                    folder: Path) -> str:
         try:
-            ev_dir = self._ms.mission_dir / "evidence"
+            ev_dir = folder / "evidence"
             ev_dir.mkdir(parents=True, exist_ok=True)
             ts  = datetime.now().strftime("%H%M%S")
             fn  = f"{ts}_{class_name}_{fid:04d}.jpg"
@@ -160,31 +198,12 @@ class EvidenceManager:
         except Exception:
             return ""
 
-    def get_all(self) -> List[Evidence]:
-        with self._lock:
-            return list(self._items)
-
-    def delete(self, evidence_id: str):
-        with self._lock:
-            self._items = [e for e in self._items if e.evidence_id != evidence_id]
-
-    def verify(self, evidence_id: str, verified: bool, notes: str = ""):
-        with self._lock:
-            for e in self._items:
-                if e.evidence_id == evidence_id:
-                    e.verified = verified
-                    e.notes    = notes
-                    break
-        self._update_json()
-
-    def _append_csv(self, ev: Evidence):
-        if self._ms.mission_dir is None:
-            return
+    # ── CSV (append mode — never overwrites) ──────────────────────────────────
+    def _append_csv(self, ev: Evidence, folder: Path):
         try:
-            path = self._ms.mission_dir / "detections.csv"
+            path = folder / "detections.csv"
             with open(path, "a", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow([
+                csv.writer(f).writerow([
                     ev.evidence_id, ev.timestamp.isoformat(),
                     ev.class_name, f"{ev.confidence:.3f}",
                     ev.track_id, ev.priority, ev.camera,
@@ -193,13 +212,53 @@ class EvidenceManager:
         except Exception:
             pass
 
-    def _update_json(self):
-        if self._ms.mission_dir is None:
-            return
+    # ── JSON (full rewrite from in-memory list) ───────────────────────────────
+    def _flush_json(self, folder: Path):
         try:
             with self._lock:
                 data = [e.to_dict() for e in self._items]
-            path = self._ms.mission_dir / "detections.json"
-            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            (folder / "detections.json").write_text(
+                json.dumps(data, indent=2), encoding="utf-8")
         except Exception:
             pass
+
+    def flush_final(self):
+        """
+        Called by MissionDialog.finish() to ensure the last JSON state
+        is written to the pinned folder before it is cleared.
+        """
+        with self._lock:
+            folder = self._active_folder
+            data   = [e.to_dict() for e in self._items]
+        if folder is None:
+            return
+        try:
+            (folder / "detections.json").write_text(
+                json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    # ── In-memory accessors ───────────────────────────────────────────────────
+    def get_all(self) -> List[Evidence]:
+        with self._lock:
+            return list(self._items)
+
+    def delete(self, evidence_id: str):
+        with self._lock:
+            self._items = [e for e in self._items
+                           if e.evidence_id != evidence_id]
+        with self._lock:
+            folder = self._active_folder
+        if folder:
+            self._flush_json(folder)
+
+    def verify(self, evidence_id: str, verified: bool, notes: str = ""):
+        with self._lock:
+            for e in self._items:
+                if e.evidence_id == evidence_id:
+                    e.verified = verified
+                    e.notes    = notes
+                    break
+            folder = self._active_folder
+        if folder:
+            self._flush_json(folder)
