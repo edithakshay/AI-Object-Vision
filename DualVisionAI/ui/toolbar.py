@@ -50,10 +50,13 @@ class Toolbar(ctk.CTkFrame):
         self._build()
 
     def _build(self):
-        # ── RIGHT side packed FIRST so it is never clipped ──────────────
+        # ── RIGHT side packed FIRST — always visible, never clipped ─────
         right = ctk.CTkFrame(self, fg_color="transparent")
         right.pack(side="right", padx=6, pady=6)
 
+        self._btn(right, "🎯 Mission", "#1E5F3A", "#1A7A42",
+                  lambda: self._call("mission"))
+        _sep(right)
         self._btn(right, "CSV",   "#1E3A5F", "#334155",
                   lambda: self._call("export_csv"))
         self._btn(right, "JSON",  "#1E3A5F", "#334155",
@@ -61,8 +64,6 @@ class Toolbar(ctk.CTkFrame):
         _sep(right)
         self._btn(right, "About", "#1E3A5F", "#334155",
                   lambda: self._call("about"))
-        self._btn(right, "✕ Exit", "#7F1D1D", "#991B1B",
-                  lambda: self._call("exit"), width=72)
 
         # ── LEFT side packed after right ────────────────────────────────
         left = ctk.CTkFrame(self, fg_color="transparent")
@@ -96,8 +97,6 @@ class Toolbar(ctk.CTkFrame):
 
         self._btn(left, "⚙ Settings", "#1E3A5F", "#334155",
                   lambda: self._call("settings"))
-        self._btn(left, "🎯 Mission", "#1E3A5F", "#334155",
-                  lambda: self._call("mission"))
         self._btn(left, "🗂 Models",  "#1E2A3A", "#1E3A5F",
                   lambda: self._call("model_manager"))
         self._btn(left, "🔍 Debug",   "#1E2A3A", "#1E3A5F",
